@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+build/
+dist/
+
+# Tooling
+.pytest_cache/
+.ruff_cache/
+
+# Outputs — datasets, checkpoints and rollouts live outside the repo
+outputs/
+data/
+checkpoints/
+*.mp4

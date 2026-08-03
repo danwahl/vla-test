@@ -1,0 +1,35 @@
+[project]
+name = "vla-test-sim"
+version = "0.1.0"
+description = "SO-101 block manipulation in ManiSkill3."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "mani-skill==3.0.1",
+    "sapien==3.0.3",
+    "torch==2.5.1",
+    "numpy>=2.0,<3",
+    "gymnasium>=1.0,<2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pillow>=12.3.0",
+    "pytest>=8",
+    "ruff>=0.6",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/vla_test_sim"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "C4", "RUF"]
