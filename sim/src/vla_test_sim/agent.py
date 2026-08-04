@@ -14,10 +14,16 @@ from mani_skill.agents.registration import register_agent
 ARM_JOINTS = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll"]
 JOINT_NAMES = [*ARM_JOINTS, "gripper"]
 
-GRIPPER_NEUTRAL = 0.5
+# One width for open and one for closed, so a policy reads a single unambiguous pair.
+GRIPPER_OPEN = 0.7
+GRIPPER_CLOSED = 0.09       # a few mm inside the 30 mm cube
 
 BASE_POSE = sapien.Pose(p=[0.0, 0.0, 0.74])
-HOME_QPOS = np.array([-0.1414, 0.3624, -1.1317, 1.5485, -0.0915, GRIPPER_NEUTRAL], np.float32)
+
+# The tool over the middle of the spawn box, 140 mm up, at the flattest tilt that reaches
+# there (see kinematics.ik_clearance). The wrist camera takes in the whole spawn box from
+# here, and the jaws start at the width the cycle opens to.
+HOME_QPOS = np.array([0.0009, -0.7083, 0.2796, 1.6270, -1.5212, GRIPPER_OPEN], np.float32)
 
 _GRIP = {"material": "grip", "patch_radius": 0.1, "min_patch_radius": 0.1}
 

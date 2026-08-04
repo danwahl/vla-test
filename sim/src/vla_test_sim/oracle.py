@@ -13,7 +13,7 @@ import math
 
 import torch
 
-from .agent import HOME_QPOS
+from .agent import GRIPPER_CLOSED, GRIPPER_OPEN, HOME_QPOS
 from .env import CUBE_SIDE
 from .kinematics import ik, ik_clearance, ik_straight_up
 
@@ -22,12 +22,6 @@ GRASP_LATERAL = 0.020    # along the jaw axis, seating the cube against the fixe
 HOVER_DZ = 0.06          # clearance above the grasp and above the target stack
 RETRACT_DZ = 0.05        # leave the seated cube by this much, before the tool has to tilt
 REST_GAP = 0.001         # release this close to a seated stack, so it settles rather than drops
-
-# One width for open and one for closed, so a policy reads a single unambiguous pair. The
-# jaw is asymmetric and brushes a seated cube on its way open, at a cost of about a stack
-# in a hundred.
-GRIP_OPEN = 0.7
-GRIP_CLOSED = 0.09       # a few mm inside the 30 mm cube
 
 # Opening slowly lets the placed cube settle while the jaw is still moving. Closing spends
 # its settling time afterwards instead: the grip loads only once the jaws have stopped, and
@@ -135,43 +129,51 @@ class Oracle:
             q_best = q if q_best is None else torch.where(take[:, None], q, q_best)
             jaw_best = torch.where(take, jaw, jaw_best)
             cost = torch.where(take, twist, cost)
-        return q_best, jaw_best, cost.isfinite()
+        return q_best, jaw_best
 
-    def _plan_place(self, pos, yaw, offset, grasp_jaw):
-        """Keyposes that seat a cube held at ``offset`` from the TCP on top of ``pos``.
+    def _place_tcp(self, pos, offset, turn):
+        """Where the TCP goes to rest a cube held at ``offset`` on top of ``pos``.
 
-        Both cubes are 4-fold symmetric, so any quarter turn seats flush; take the one
-        nearest ``grasp_jaw``, or the wrist spins most of a turn mid-carry and slings the
-        cube out of the jaws.
+        Turning the wrist by ``turn`` swings the held cube around the tool axis, so the
+        offset to its centre turns with it.
         """
-        turn = fold_yaw(yaw - grasp_jaw)
-        jaw = grasp_jaw + turn
         cos, sin = torch.cos(turn), torch.sin(turn)
         turned = torch.stack([cos * offset[:, 0] - sin * offset[:, 1],
                               sin * offset[:, 0] + cos * offset[:, 1], offset[:, 2]], -1)
-        tcp = pos + self._up(CUBE_SIDE + REST_GAP) - turned
-        q_rest, reachable = ik(tcp, jaw)
-        q_above, above_ok = ik_clearance(tcp + self._up(HOVER_DZ), jaw, self.limits)
-        q_clear, _ = ik_straight_up(tcp, jaw, self.limits, RETRACT_DZ)
-        return q_rest, q_above, q_clear, self._in_limits(q_rest, reachable) & above_ok
+        return pos + self._up(CUBE_SIDE + REST_GAP) - turned
 
-    def feasible(self, held, target):
-        """Whether the arm can reach the grasp, carry the cube clear, and seat the stack."""
-        held_pos, held_yaw = self._cube(held)
-        target_pos, target_yaw = self._cube(target)
-        _, jaw, grasp_ok = self._plan_grasp(held_pos, held_yaw)
-        _, lift_ok = ik_clearance(self._grasp_tcp(held_pos, jaw) + self._up(HOVER_DZ),
-                                  jaw, self.limits)
-        *_, place_ok = self._plan_place(target_pos, target_yaw,
-                                        torch.zeros_like(target_pos), jaw)
-        return grasp_ok & lift_ok & place_ok
+    def _plan_place(self, pos, yaw, offset, grasp_jaw, roll_now):
+        """Keyposes that seat a cube held at ``offset`` from the TCP on top of ``pos``.
+
+        Both cubes are 4-fold symmetric, so all four quarter turns seat flush. The roll
+        joint spans less than a full turn, and the pan differs between the two cubes, so
+        the quarter that turns the jaw least is not the one that turns the wrist least.
+        Take the one that leaves the wrist nearest ``roll_now``, or it unwinds most of a
+        turn mid-carry and slings the cube out of the jaws.
+        """
+        square = grasp_jaw + fold_yaw(yaw - grasp_jaw)
+        jaw_best = square.clone()
+        cost = torch.full((self.n,), math.inf, device=self.device, dtype=torch.float64)
+        for quarter in range(4):
+            jaw = square + quarter * math.pi / 2
+            q, reachable = ik(self._place_tcp(pos, offset, jaw - grasp_jaw), jaw)
+            twist = (q[:, 4] - roll_now).abs()
+            take = self._in_limits(q, reachable) & (twist < cost)
+            jaw_best = torch.where(take, jaw, jaw_best)
+            cost = torch.where(take, twist, cost)
+
+        tcp = self._place_tcp(pos, offset, jaw_best - grasp_jaw)
+        q_rest, _ = ik(tcp, jaw_best)
+        q_above, _ = ik_clearance(tcp + self._up(HOVER_DZ), jaw_best, self.limits)
+        q_clear, _ = ik_straight_up(tcp, jaw_best, self.limits, RETRACT_DZ)
+        return q_rest, q_above, q_clear
 
     # ---- motion -----------------------------------------------------------
     def _act(self, command):
         self.command = command
-        self.env.step(command.to(torch.float32))
+        obs, *_ = self.env.step(command.to(torch.float32))
         if self.on_step is not None:
-            self.on_step()
+            self.on_step(obs)
 
     def _hold(self, steps):
         for _ in range(steps):
@@ -229,17 +231,21 @@ class Oracle:
 
     # ---- one cycle --------------------------------------------------------
     def run(self, held, target, on_step=None):
-        """Pick the ``held`` cube and stack it on the ``target`` cube, in every env."""
+        """Pick the ``held`` cube and stack it on the ``target`` cube, in every env.
+
+        ``on_step`` is handed each step's observation, alongside the ``self.command`` that
+        produced it, so a demonstration can be recorded without rendering the scene twice.
+        """
         self.on_step = on_step
         held_pos, held_yaw = self._cube(held)
 
-        q_grasp, jaw, _ = self._plan_grasp(held_pos, held_yaw)
+        q_grasp, jaw = self._plan_grasp(held_pos, held_yaw)
         q_clear, _ = ik_clearance(self._grasp_tcp(held_pos, jaw) + self._up(HOVER_DZ),
                                   jaw, self.limits)
 
         # Three moves, parted only where the jaws have to work against a stationary arm.
-        self._move(q_clear, q_grasp, gripper=GRIP_OPEN)
-        self._grip(GRIP_CLOSED, CLOSE_STEPS, GRIP_STEPS)
+        self._move(q_clear, q_grasp, gripper=GRIPPER_OPEN)
+        self._grip(GRIPPER_CLOSED, CLOSE_STEPS, GRIP_STEPS)
 
         # The cube is held rigidly, so aim its centre rather than the TCP. Read the
         # offset here, still fingers-down: the place is fingers-down too, so carrying it
@@ -247,10 +253,11 @@ class Oracle:
         offset = self._cube(held)[0] - self.env.agent.tcp_pose.p.to(torch.float64)
 
         target_pos, target_yaw = self._cube(target)
-        q_rest, q_above, q_retract, _ = self._plan_place(target_pos, target_yaw, offset, jaw)
-        self._move(q_clear, q_above, q_rest, gripper=GRIP_CLOSED)
-        self._grip(GRIP_OPEN, RELEASE_STEPS)
+        q_rest, q_above, q_retract = self._plan_place(target_pos, target_yaw, offset, jaw,
+                                                      q_grasp[:, 4])
+        self._move(q_clear, q_above, q_rest, gripper=GRIPPER_CLOSED)
+        self._grip(GRIPPER_OPEN, RELEASE_STEPS)
         # Leave straight up: the jaws still straddle the cube, so the retract trades
         # reach for keeping the tool vertical.
-        self._move(q_retract, gripper=GRIP_OPEN)
+        self._move(q_retract, gripper=GRIPPER_OPEN)
         self.on_step = None

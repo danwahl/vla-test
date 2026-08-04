@@ -1,0 +1,185 @@
+"""Collect oracle demonstrations into a LeRobot v3.0 dataset.
+
+    uv run --extra data python scripts/collect.py OUT
+
+Layouts are screened before anything is rendered: a batch is spawned, the oracle runs on
+state alone, and only the layouts it stacks are kept. The train ones are then replayed with
+the cameras on and written out as episodes. The eval ones are screened the same way and
+only written down, as the held-out set a policy is measured on.
+
+Each batch covers the colour pairs still short of their quota, so the six of them come out
+even.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+
+import gymnasium as gym
+import numpy as np
+import torch
+from lerobot.configs.video import RGBEncoderConfig
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+import vla_test_sim  # noqa: F401  (registers the env)
+from vla_test_sim.agent import JOINT_NAMES
+from vla_test_sim.env import CUBE_NAMES, CUBE_REST_Z, IMAGE_SIZE, SPAWN_YAW, TASK_PROMPT
+from vla_test_sim.oracle import Oracle
+
+CAMERAS = ("wrist", "top")
+PAIRS = [(held, target) for held in range(3) for target in range(3) if held != target]
+
+FEATURES = {
+    "observation.state": {"dtype": "float32", "shape": (len(JOINT_NAMES),),
+                          "names": JOINT_NAMES},
+    "action": {"dtype": "float32", "shape": (len(JOINT_NAMES),), "names": JOINT_NAMES},
+    **{f"observation.images.{camera}": {"dtype": "video",
+                                        "shape": (IMAGE_SIZE, IMAGE_SIZE, 3),
+                                        "names": ["height", "width", "channel"]}
+       for camera in CAMERAS},
+}
+
+
+def prompt(held, target):
+    return TASK_PROMPT.format(held=CUBE_NAMES[held], target=CUBE_NAMES[target])
+
+
+def screen(env, need, seed):
+    """Spawn batches until every colour pair has ``need`` layouts the oracle stacks.
+
+    A batch is filled from the pairs still short, so the run stops as soon as the last
+    pair is met rather than carrying on for the ones already full.
+    """
+    kept = {pair: [] for pair in PAIRS}
+    batch = 0
+    while short := [pair for pair in PAIRS for _ in range(need - len(kept[pair]))]:
+        pairs = [short[i % len(short)] for i in range(env.num_envs)]
+        env.reset(seed=seed + batch, options={"layout": {
+            "held": [pair[0] for pair in pairs], "target": [pair[1] for pair in pairs]}})
+        layout = {key: value.cpu().numpy() for key, value in env.layout().items()}
+
+        Oracle(env).run(env.held, env.target)
+        won = env.evaluate()["success"].cpu().numpy()
+        for i in np.flatnonzero(won):
+            if len(kept[pairs[i]]) < need:
+                kept[pairs[i]].append({key: value[i] for key, value in layout.items()})
+        print(f"screen batch {batch}: {won.sum()}/{env.num_envs} stacked, "
+              f"{sum(len(v) for v in kept.values())}/{need * len(PAIRS)} kept", flush=True)
+        batch += 1
+    return kept
+
+
+def rollout(env, layouts):
+    """Replay a batch of ``layouts`` with the cameras on, keeping every step.
+
+    Returns the commands, the observations that earned them, and which envs stacked. One
+    snapshot is taken before the first command and one after each, so ``snapshots[t]`` is
+    what the oracle saw when it chose ``commands[t]``.
+    """
+    obs, _ = env.reset(options={"layout": {
+        key: np.stack([item[key] for item in layouts]) for key in layouts[0]}})
+    oracle = Oracle(env)
+    snapshots, commands = [], []
+
+    def snapshot(obs):
+        snapshots.append((obs["agent"]["qpos"].cpu().numpy(),
+                          *(obs["sensor_data"][c]["rgb"].cpu().numpy() for c in CAMERAS)))
+
+    def step(obs):
+        commands.append(oracle.command.cpu().numpy())
+        snapshot(obs)
+
+    snapshot(obs)
+    oracle.run(env.held, env.target, on_step=step)
+    return commands, snapshots, env.evaluate()["success"].cpu().numpy()
+
+
+def record(env, layouts, dataset):
+    """Replay ``layouts`` and save each one as an episode, returning the ones written.
+
+    Every env in a batch runs the same phases, so an episode is as long as the batch's
+    slowest env; the tail of a short last batch repeats a layout and is dropped.
+    """
+    written = []
+    for start in range(0, len(layouts), env.num_envs):
+        batch = layouts[start:start + env.num_envs]
+        padded = batch + [batch[-1]] * (env.num_envs - len(batch))
+        commands, snapshots, won = rollout(env, padded)
+
+        for i, item in enumerate(batch):
+            if not won[i]:
+                continue
+            task = prompt(int(item["held"]), int(item["target"]))
+            for command, (qpos, *images) in zip(commands, snapshots[:-1], strict=True):
+                dataset.add_frame({
+                    "observation.state": qpos[i].astype(np.float32),
+                    "action": command[i].astype(np.float32),
+                    **{f"observation.images.{c}": image[i]
+                       for c, image in zip(CAMERAS, images, strict=True)},
+                    "task": task,
+                })
+            dataset.save_episode()
+            written.append(item)
+        print(f"record {len(written)}/{len(layouts)} episodes, "
+              f"{len(commands)} frames each", flush=True)
+    return written
+
+
+def write_layouts(path, layouts, key):
+    """One line per layout, giving the spawn a run can be replayed from."""
+    with path.open("w") as out:
+        for i, item in enumerate(layouts):
+            positions = [[float(x), float(y), CUBE_REST_Z] for x, y in item["xy"]]
+            out.write(json.dumps({
+                key: i,
+                "held": int(item["held"]),
+                "target": int(item["target"]),
+                "prompt": prompt(int(item["held"]), int(item["target"])),
+                "positions": positions,
+                "yaws": [float(yaw) for yaw in item["yaw"]],
+                "max_yaw": SPAWN_YAW,
+            }) + "\n")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("out", type=Path)
+    parser.add_argument("--repo-id", default="vla-test/so101_cube_stack_sim")
+    parser.add_argument("--per-pair", type=int, default=60, help="train episodes per pair")
+    parser.add_argument("--eval-per-pair", type=int, default=25, help="held-out layouts per pair")
+    parser.add_argument("--envs", type=int, default=16, help="envs stepped in lockstep")
+    parser.add_argument("--seed", type=int, default=0)
+    args = parser.parse_args()
+
+    torch.manual_seed(args.seed)
+    state_env = gym.make("SO101Blocks-v1", num_envs=args.envs).unwrapped
+    fps = round(1 / state_env.control_timestep)
+    train = screen(state_env, args.per_pair, args.seed)
+    held_out = screen(state_env, args.eval_per_pair, args.seed + 10_000)
+    state_env.close()
+
+    # Train layouts run pair by pair; the held-out ones cycle, so a truncated eval still
+    # covers all six.
+    ordered = [item for pair in PAIRS for item in train[pair]]
+    interleaved = [held_out[pair][i] for i in range(args.eval_per_pair) for pair in PAIRS]
+
+    dataset = LeRobotDataset.create(repo_id=args.repo_id, fps=fps, features=FEATURES,
+                                    root=args.out, robot_type="so101",
+                                    # H.264 rather than the AV1 default: every loader
+                                    # downstream of here decodes it.
+                                    rgb_encoder=RGBEncoderConfig(vcodec="h264"))
+    render_env = gym.make("SO101Blocks-v1", num_envs=args.envs, obs_mode="rgb").unwrapped
+    written = record(render_env, ordered, dataset)
+    render_env.close()
+    dataset.finalize()
+
+    meta = args.out / "meta"
+    write_layouts(meta / "train_layouts.jsonl", written, "episode_index")
+    write_layouts(meta / "eval_layouts.jsonl", interleaved, "index")
+    print(f"{len(written)} episodes and {len(interleaved)} held-out layouts in {args.out}")
+
+
+if __name__ == "__main__":
+    main()

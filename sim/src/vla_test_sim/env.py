@@ -62,9 +62,9 @@ DISTURB_TOL = 0.015
 TASK_PROMPT = "stack the {held} cube on the {target} cube"
 
 
-# Long enough for one oracle cycle and some room over it: the cycle runs a little under
-# 300 steps, and grows slightly with the batch, since a move is paced by the env that has
-# furthest to travel.
+# Long enough for one oracle cycle and room to spare for a policy that wanders: the cycle
+# runs a little over 200 steps, and grows slightly with the batch, since a move is paced by
+# the env that has furthest to travel.
 @register_env("SO101Blocks-v1", max_episode_steps=400)
 class SO101Blocks(BaseEnv):
     SUPPORTED_ROBOTS: ClassVar[list[str]] = ["so101"]
@@ -142,12 +142,25 @@ class SO101Blocks(BaseEnv):
             self.agent.robot.set_qpos(torch.tensor(HOME_QPOS).repeat(b, 1))
             self.agent.robot.set_pose(BASE_POSE)
 
-            # A layout can be given instead of sampled, so a run can be replayed.
-            layout = (options or {}).get("layout")
-            xy, yaw = self._sample_layout(b) if layout is None else (
-                torch.as_tensor(layout["xy"], dtype=torch.float32).expand(b, 3, 2),
-                torch.as_tensor(layout["yaw"], dtype=torch.float32).expand(b, 3),
-            )
+            # Spawns and colour pair can each be given instead of sampled, so a run can be
+            # replayed and a batch can be made to cover the pairs evenly. One value is
+            # shared by the whole batch; a batch of them is taken one per env.
+            layout = (options or {}).get("layout") or {}
+
+            def given(key, dtype, *shape):
+                return torch.as_tensor(layout[key], dtype=dtype,
+                                       device=self.device).expand(b, *shape)
+
+            if "xy" in layout:
+                xy, yaw = given("xy", torch.float32, 3, 2), given("yaw", torch.float32, 3)
+            else:
+                xy, yaw = self._sample_layout(b)
+            if "held" in layout:
+                held, target = given("held", torch.long), given("target", torch.long)
+            else:
+                held = torch.randint(3, (b,))
+                target = (held + 1 + torch.randint(2, (b,))) % 3
+
             for i, name in enumerate(CUBE_NAMES):
                 pose = torch.zeros(b, 7)
                 pose[:, :2] = xy[:, i]
@@ -158,12 +171,6 @@ class SO101Blocks(BaseEnv):
                 self.cubes[name].set_linear_velocity(torch.zeros(b, 3))
                 self.cubes[name].set_angular_velocity(torch.zeros(b, 3))
 
-            if layout is None:
-                held = torch.randint(3, (b,))
-                target = (held + 1 + torch.randint(2, (b,))) % 3
-            else:
-                held = torch.full((b,), layout["held"])
-                target = torch.full((b,), layout["target"])
             self.held, self.target = held, target
             self.spawns = torch.stack(
                 [self.cubes[n].pose.p[env_idx] for n in CUBE_NAMES], dim=1
@@ -186,6 +193,17 @@ class SO101Blocks(BaseEnv):
 
     def _cube_positions(self):
         return torch.stack([self.cubes[n].pose.p for n in CUBE_NAMES], dim=1)
+
+    def layout(self):
+        """What was just spawned, per env, in the form ``reset`` takes it back in.
+
+        The cubes stand upright until something pushes them, so a spawn quaternion is a
+        yaw and nothing else. Read it before stepping.
+        """
+        quat = torch.stack([self.cubes[n].pose.q for n in CUBE_NAMES], dim=1)
+        return {"xy": self._cube_positions()[..., :2],
+                "yaw": 2 * torch.atan2(quat[..., 3], quat[..., 0]),
+                "held": self.held, "target": self.target}
 
     def evaluate(self):
         """The two gates: was the commanded cube lifted, and did it come to rest stacked."""
