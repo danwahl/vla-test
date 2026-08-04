@@ -12,6 +12,7 @@ from mani_skill.sensors.camera import CameraConfig
 from mani_skill.utils import sapien_utils
 from mani_skill.utils.building.ground import build_ground
 from mani_skill.utils.registration import register_env
+from mani_skill.utils.structs.pose import Pose
 from mani_skill.utils.structs.types import SimConfig
 
 from .agent import BASE_POSE, HOME_QPOS, SO101  # noqa: F401  (import registers the agent)
@@ -41,10 +42,30 @@ CUBE_COLOURS = {
     "green": (0.10, 0.65, 0.15, 1.0),
     "blue": (0.10, 0.20, 0.85, 1.0),
 }
-CUBE_LAYOUT = {"red": (0.29, 0.00), "green": (0.30, 0.09), "blue": (0.29, 0.18)}
+CUBE_NAMES = tuple(CUBE_COLOURS)
+# Spawn box, inside the arm's top-down reach at both grasp and stack height. The
+# separation clears a cube rotated onto its 42 mm diagonal.
+SPAWN_X = (0.17, 0.25)
+SPAWN_Y = (-0.12, 0.12)
+SPAWN_SEPARATION = 0.07
+
+# The cube is 4-fold symmetric top-down, so a quarter turn spans every distinct pose.
+SPAWN_YAW = np.pi / 2
+
+# Success gates. A lift clears the table; a stack is seated within a cube half-width,
+# one cube-height up, with neither of the other two cubes shoved out of place.
+LIFT_DZ = 0.05
+STACK_XY_TOL = 0.018
+STACK_Z_TOL = 0.012
+DISTURB_TOL = 0.015
+
+TASK_PROMPT = "stack the {held} cube on the {target} cube"
 
 
-@register_env("SO101Blocks-v1", max_episode_steps=200)
+# Long enough for one oracle cycle and some room over it: the cycle runs a little under
+# 300 steps, and grows slightly with the batch, since a move is paced by the env that has
+# furthest to travel.
+@register_env("SO101Blocks-v1", max_episode_steps=400)
 class SO101Blocks(BaseEnv):
     SUPPORTED_ROBOTS: ClassVar[list[str]] = ["so101"]
     # ManiSkill defaults to normalized_dense, which raises on the first step() until
@@ -71,8 +92,8 @@ class SO101Blocks(BaseEnv):
 
     @property
     def _default_human_render_camera_configs(self):
-        pose = sapien_utils.look_at(eye=[1.15, -0.95, 1.30], target=[0.12, 0.0, 0.98])
-        return CameraConfig("render_camera", pose, 512, 512, fov=np.deg2rad(50), near=0.01, far=100)
+        pose = sapien_utils.look_at(eye=[0.66, -0.52, 1.12], target=[0.20, 0.02, 0.86])
+        return CameraConfig("render_camera", pose, 512, 512, fov=np.deg2rad(52), near=0.01, far=100)
 
     def _load_agent(self, options):
         super()._load_agent(options, BASE_POSE)
@@ -92,7 +113,8 @@ class SO101Blocks(BaseEnv):
             static_friction=1.5, dynamic_friction=1.5, restitution=0.0
         )
         self.cubes = {}
-        for name, (x, y) in CUBE_LAYOUT.items():
+        for i, name in enumerate(CUBE_NAMES):
+            x, y = SPAWN_X[0] + 0.03 * i, SPAWN_Y[0]
             builder = self.scene.create_actor_builder()
             builder.add_box_collision(half_size=[CUBE_HALF] * 3, material=friction,
                                       density=CUBE_MASS / CUBE_SIDE**3)
@@ -102,13 +124,86 @@ class SO101Blocks(BaseEnv):
             )
             builder.initial_pose = sapien.Pose(p=[x, y, CUBE_REST_Z])
             self.cubes[name] = builder.build(name=f"cube_{name}")
+        self._cube_friction = friction
+
+    def _after_reconfigure(self, options):
+        # Across parallel scenes a material handed to the builder is reported back
+        # correctly but is not what the solver uses, and cubes slide on one another as if
+        # frictionless. Assigning it once the scene is up is what takes effect.
+        for cube in self.cubes.values():
+            for obj in cube._objs:
+                body = obj.find_component_by_type(sapien.physx.PhysxRigidDynamicComponent)
+                for shape in body.collision_shapes:
+                    shape.physical_material = self._cube_friction
 
     def _initialize_episode(self, env_idx, options):
         with torch.device(self.device):
-            self.agent.robot.set_qpos(
-                torch.tensor(HOME_QPOS, device=self.device).repeat(len(env_idx), 1)
-            )
+            b = len(env_idx)
+            self.agent.robot.set_qpos(torch.tensor(HOME_QPOS).repeat(b, 1))
             self.agent.robot.set_pose(BASE_POSE)
 
+            # A layout can be given instead of sampled, so a run can be replayed.
+            layout = (options or {}).get("layout")
+            xy, yaw = self._sample_layout(b) if layout is None else (
+                torch.as_tensor(layout["xy"], dtype=torch.float32).expand(b, 3, 2),
+                torch.as_tensor(layout["yaw"], dtype=torch.float32).expand(b, 3),
+            )
+            for i, name in enumerate(CUBE_NAMES):
+                pose = torch.zeros(b, 7)
+                pose[:, :2] = xy[:, i]
+                pose[:, 2] = CUBE_REST_Z
+                pose[:, 3] = torch.cos(yaw[:, i] / 2)
+                pose[:, 6] = torch.sin(yaw[:, i] / 2)
+                self.cubes[name].set_pose(Pose.create(pose))
+                self.cubes[name].set_linear_velocity(torch.zeros(b, 3))
+                self.cubes[name].set_angular_velocity(torch.zeros(b, 3))
+
+            if layout is None:
+                held = torch.randint(3, (b,))
+                target = (held + 1 + torch.randint(2, (b,))) % 3
+            else:
+                held = torch.full((b,), layout["held"])
+                target = torch.full((b,), layout["target"])
+            self.held, self.target = held, target
+            self.spawns = torch.stack(
+                [self.cubes[n].pose.p[env_idx] for n in CUBE_NAMES], dim=1
+            )
+            self.lifted = torch.zeros(b, dtype=torch.bool)
+
+    def _sample_layout(self, b):
+        """Three cube spawns, resampled until none of them overlap."""
+        with torch.device(self.device):
+            lo = torch.tensor([SPAWN_X[0], SPAWN_Y[0]])
+            span = torch.tensor([SPAWN_X[1] - SPAWN_X[0], SPAWN_Y[1] - SPAWN_Y[0]])
+            xy = lo + span * torch.rand(b, 3, 2)
+            for _ in range(64):
+                gap = torch.cdist(xy, xy) + torch.eye(3) * SPAWN_SEPARATION
+                crowded = (gap < SPAWN_SEPARATION).any(-1).any(-1)
+                if not crowded.any():
+                    break
+                xy[crowded] = lo + span * torch.rand(int(crowded.sum()), 3, 2)
+            return xy, SPAWN_YAW * torch.rand(b, 3)
+
+    def _cube_positions(self):
+        return torch.stack([self.cubes[n].pose.p for n in CUBE_NAMES], dim=1)
+
     def evaluate(self):
-        return {}
+        """The two gates: was the commanded cube lifted, and did it come to rest stacked."""
+        pos = self._cube_positions()
+        rows = torch.arange(self.num_envs, device=self.device)
+        held, target = pos[rows, self.held], pos[rows, self.target]
+        spawn = self.spawns[rows, self.held]
+
+        self.lifted |= (held[:, 2] - spawn[:, 2]) > LIFT_DZ
+
+        moved = torch.linalg.norm((pos - self.spawns)[..., :2], dim=-1)
+        moved[rows, self.held] = 0.0
+        stack_xy = torch.linalg.norm((held - target)[:, :2], dim=-1)
+        stack_z = held[:, 2] - target[:, 2]
+        stacked = (
+            (stack_xy < STACK_XY_TOL)
+            & ((stack_z - CUBE_SIDE).abs() < STACK_Z_TOL)
+            & (moved < DISTURB_TOL).all(-1)
+        )
+        return {"success": stacked, "lifted": self.lifted.clone(),
+                "stack_xy": stack_xy, "stack_z": stack_z}
