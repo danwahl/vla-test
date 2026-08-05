@@ -37,3 +37,11 @@ uv run lerobot-train --config_path=train/pi05_so101_lora_backbone.yaml \
 ```
 
 `uv sync --package vla-test-train` installs this without the sim.
+
+`train/merge.py` folds the adapter into the base weights, for a checkpoint that loads without one:
+
+```bash
+uv run python train/merge.py \
+    /data/checkpoints/pi05_so101_block_stack_sim/checkpoints/last/pretrained_model \
+    /data/checkpoints/pi05_so101_block_stack_sim/merged
+```
