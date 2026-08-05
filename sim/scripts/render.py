@@ -11,7 +11,7 @@ import vla_test_sim  # noqa: F401  (registers the env)
 out = Path(sys.argv[1] if len(sys.argv) > 1 else "/tmp/so101")
 out.mkdir(parents=True, exist_ok=True)
 
-env = gym.make("SO101Blocks-v1", obs_mode="rgb", render_mode="rgb_array", num_envs=1)
+env = gym.make("SO101BlockStack-v1", obs_mode="rgb", render_mode="rgb_array", num_envs=1)
 obs, _ = env.reset(seed=0)
 
 views = {name: cam["rgb"][0] for name, cam in obs["sensor_data"].items()}

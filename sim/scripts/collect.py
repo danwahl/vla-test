@@ -24,7 +24,7 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
 import vla_test_sim  # noqa: F401  (registers the env)
 from vla_test_sim.agent import JOINT_NAMES
-from vla_test_sim.env import CUBE_NAMES, CUBE_REST_Z, IMAGE_SIZE, SPAWN_YAW, TASK_PROMPT
+from vla_test_sim.env import BLOCK_NAMES, BLOCK_REST_Z, IMAGE_SIZE, SPAWN_YAW, TASK_PROMPT
 from vla_test_sim.oracle import Oracle
 
 CAMERAS = ("wrist", "top")
@@ -42,7 +42,7 @@ FEATURES = {
 
 
 def prompt(held, target):
-    return TASK_PROMPT.format(held=CUBE_NAMES[held], target=CUBE_NAMES[target])
+    return TASK_PROMPT.format(held=BLOCK_NAMES[held], target=BLOCK_NAMES[target])
 
 
 def screen(env, need, seed):
@@ -128,7 +128,7 @@ def write_layouts(path, layouts, key):
     """One line per layout, giving the spawn a run can be replayed from."""
     with path.open("w") as out:
         for i, item in enumerate(layouts):
-            positions = [[float(x), float(y), CUBE_REST_Z] for x, y in item["xy"]]
+            positions = [[float(x), float(y), BLOCK_REST_Z] for x, y in item["xy"]]
             out.write(json.dumps({
                 key: i,
                 "held": int(item["held"]),
@@ -143,7 +143,7 @@ def write_layouts(path, layouts, key):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("out", type=Path)
-    parser.add_argument("--repo-id", default="vla-test/so101_cube_stack_sim")
+    parser.add_argument("--repo-id", default="vla-test/so101_block_stack_sim")
     parser.add_argument("--per-pair", type=int, default=60, help="train episodes per pair")
     parser.add_argument("--eval-per-pair", type=int, default=25, help="held-out layouts per pair")
     parser.add_argument("--envs", type=int, default=16, help="envs stepped in lockstep")
@@ -151,14 +151,14 @@ def main():
     args = parser.parse_args()
 
     torch.manual_seed(args.seed)
-    state_env = gym.make("SO101Blocks-v1", num_envs=args.envs).unwrapped
+    state_env = gym.make("SO101BlockStack-v1", num_envs=args.envs).unwrapped
     fps = round(1 / state_env.control_timestep)
     dataset = LeRobotDataset.create(repo_id=args.repo_id, fps=fps, features=FEATURES,
                                     root=args.out, robot_type="so101",
                                     # H.264 rather than the AV1 default: every loader
                                     # downstream of here decodes it.
                                     rgb_encoder=RGBEncoderConfig(vcodec="h264"))
-    render_env = gym.make("SO101Blocks-v1", num_envs=args.envs, obs_mode="rgb").unwrapped
+    render_env = gym.make("SO101BlockStack-v1", num_envs=args.envs, obs_mode="rgb").unwrapped
 
     quota = dict.fromkeys(PAIRS, args.per_pair)
     written, seed = [], args.seed

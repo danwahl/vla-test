@@ -16,7 +16,7 @@ def _tcp(env, q):
 
 
 def test_ik_round_trips_through_sapien_fk():
-    env = gym.make("SO101Blocks-v1", num_envs=64).unwrapped
+    env = gym.make("SO101BlockStack-v1", num_envs=64).unwrapped
     env.reset(seed=0)
 
     rng = np.random.default_rng(0)

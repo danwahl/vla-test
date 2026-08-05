@@ -99,7 +99,7 @@ def ik_clearance(tcp, jaw_yaw, limits):
 def ik_straight_up(tcp, jaw_yaw, limits, height, steps=12):
     """Back off vertically from ``tcp``, as far as the arm can while staying fingers-down.
 
-    Withdrawing from a seated cube keeps the tool vertical, since the jaws still bracket
+    Withdrawing from a seated block keeps the tool vertical, since the jaws still bracket
     it, so this takes the highest reachable rise at that fixed orientation.
     """
     tcp = torch.as_tensor(tcp, dtype=torch.float64)

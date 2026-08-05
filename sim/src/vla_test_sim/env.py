@@ -1,4 +1,4 @@
-"""Three colour cubes on a table, seen by a wrist camera and an overhead camera."""
+"""Three colour blocks on a table, seen by a wrist camera and an overhead camera."""
 
 from __future__ import annotations
 
@@ -33,38 +33,38 @@ TABLE_SIZE = (0.80, 0.60, 0.04)
 TABLE_TOP_Z = 0.74
 TABLE_RGBA = (0.55, 0.38, 0.22, 1.0)
 
-CUBE_SIDE = 0.030
-CUBE_HALF = CUBE_SIDE / 2
-CUBE_MASS = 0.05
-CUBE_REST_Z = TABLE_TOP_Z + CUBE_HALF + 0.001
-CUBE_COLOURS = {
+BLOCK_SIDE = 0.030
+BLOCK_HALF = BLOCK_SIDE / 2
+BLOCK_MASS = 0.05
+BLOCK_REST_Z = TABLE_TOP_Z + BLOCK_HALF + 0.001
+BLOCK_COLOURS = {
     "red": (0.85, 0.10, 0.10, 1.0),
     "green": (0.10, 0.65, 0.15, 1.0),
     "blue": (0.10, 0.20, 0.85, 1.0),
 }
-CUBE_NAMES = tuple(CUBE_COLOURS)
+BLOCK_NAMES = tuple(BLOCK_COLOURS)
 # Spawn box, inside the arm's top-down reach at both grasp and stack height. The
-# separation clears a cube rotated onto its 42 mm diagonal.
+# separation clears a block rotated onto its 42 mm diagonal.
 SPAWN_X = (0.17, 0.25)
 SPAWN_Y = (-0.12, 0.12)
 SPAWN_SEPARATION = 0.07
 
-# The cube is 4-fold symmetric top-down, so a quarter turn spans every distinct pose.
+# The block is 4-fold symmetric top-down, so a quarter turn spans every distinct pose.
 SPAWN_YAW = np.pi / 2
 
-# Success gates. A lift clears the table; a stack is seated within a cube half-width,
-# one cube-height up, with neither of the other two cubes shoved out of place.
+# Success gates. A lift clears the table; a stack is seated within a block half-width,
+# one block-height up, with neither of the other two blocks shoved out of place.
 LIFT_DZ = 0.05
 STACK_XY_TOL = 0.018
 STACK_Z_TOL = 0.012
 DISTURB_TOL = 0.015
 
-TASK_PROMPT = "stack the {held} cube on the {target} cube"
+TASK_PROMPT = "stack the {held} block on the {target} block"
 
 
 # Several times one oracle cycle, leaving room for a policy that wanders.
-@register_env("SO101Blocks-v1", max_episode_steps=400)
-class SO101Blocks(BaseEnv):
+@register_env("SO101BlockStack-v1", max_episode_steps=400)
+class SO101BlockStack(BaseEnv):
     SUPPORTED_ROBOTS: ClassVar[list[str]] = ["so101"]
     # ManiSkill defaults to normalized_dense, which raises on the first step() until
     # compute_dense_reward is implemented.
@@ -78,7 +78,7 @@ class SO101Blocks(BaseEnv):
     @property
     def _default_sim_config(self):
         # 400 Hz is required for a 30 mm grasp: below it the contact impulse from
-        # closing the jaws rides the arm up and the fingers meet above the cube.
+        # closing the jaws rides the arm up and the fingers meet above the block.
         return SimConfig(sim_freq=400, control_freq=10)
 
     @property
@@ -112,29 +112,29 @@ class SO101Blocks(BaseEnv):
         friction = sapien.physx.PhysxMaterial(
             static_friction=1.5, dynamic_friction=1.5, restitution=0.0
         )
-        self.cubes = {}
-        for i, name in enumerate(CUBE_NAMES):
+        self.blocks = {}
+        for i, name in enumerate(BLOCK_NAMES):
             x, y = SPAWN_X[0] + 0.03 * i, SPAWN_Y[0]
             builder = self.scene.create_actor_builder()
-            builder.add_box_collision(half_size=[CUBE_HALF] * 3, material=friction,
-                                      density=CUBE_MASS / CUBE_SIDE**3)
+            builder.add_box_collision(half_size=[BLOCK_HALF] * 3, material=friction,
+                                      density=BLOCK_MASS / BLOCK_SIDE**3)
             builder.add_box_visual(
-                half_size=[CUBE_HALF] * 3,
-                material=sapien.render.RenderMaterial(base_color=CUBE_COLOURS[name]),
+                half_size=[BLOCK_HALF] * 3,
+                material=sapien.render.RenderMaterial(base_color=BLOCK_COLOURS[name]),
             )
-            builder.initial_pose = sapien.Pose(p=[x, y, CUBE_REST_Z])
-            self.cubes[name] = builder.build(name=f"cube_{name}")
-        self._cube_friction = friction
+            builder.initial_pose = sapien.Pose(p=[x, y, BLOCK_REST_Z])
+            self.blocks[name] = builder.build(name=f"block_{name}")
+        self._block_friction = friction
 
     def _after_reconfigure(self, options):
         # Across parallel scenes a material handed to the builder is reported back
-        # correctly but is not what the solver uses, and cubes slide on one another as if
+        # correctly but is not what the solver uses, and blocks slide on one another as if
         # frictionless. Assigning it once the scene is up is what takes effect.
-        for cube in self.cubes.values():
-            for obj in cube._objs:
+        for block in self.blocks.values():
+            for obj in block._objs:
                 body = obj.find_component_by_type(sapien.physx.PhysxRigidDynamicComponent)
                 for shape in body.collision_shapes:
-                    shape.physical_material = self._cube_friction
+                    shape.physical_material = self._block_friction
 
     def _initialize_episode(self, env_idx, options):
         with torch.device(self.device):
@@ -161,24 +161,24 @@ class SO101Blocks(BaseEnv):
                 held = torch.randint(3, (b,))
                 target = (held + 1 + torch.randint(2, (b,))) % 3
 
-            for i, name in enumerate(CUBE_NAMES):
+            for i, name in enumerate(BLOCK_NAMES):
                 pose = torch.zeros(b, 7)
                 pose[:, :2] = xy[:, i]
-                pose[:, 2] = CUBE_REST_Z
+                pose[:, 2] = BLOCK_REST_Z
                 pose[:, 3] = torch.cos(yaw[:, i] / 2)
                 pose[:, 6] = torch.sin(yaw[:, i] / 2)
-                self.cubes[name].set_pose(Pose.create(pose))
-                self.cubes[name].set_linear_velocity(torch.zeros(b, 3))
-                self.cubes[name].set_angular_velocity(torch.zeros(b, 3))
+                self.blocks[name].set_pose(Pose.create(pose))
+                self.blocks[name].set_linear_velocity(torch.zeros(b, 3))
+                self.blocks[name].set_angular_velocity(torch.zeros(b, 3))
 
             self.held, self.target = held, target
             self.spawns = torch.stack(
-                [self.cubes[n].pose.p[env_idx] for n in CUBE_NAMES], dim=1
+                [self.blocks[n].pose.p[env_idx] for n in BLOCK_NAMES], dim=1
             )
             self.lifted = torch.zeros(b, dtype=torch.bool)
 
     def _sample_layout(self, b):
-        """Three cube spawns, resampled until none of them overlap."""
+        """Three block spawns, resampled until none of them overlap."""
         with torch.device(self.device):
             lo = torch.tensor([SPAWN_X[0], SPAWN_Y[0]])
             span = torch.tensor([SPAWN_X[1] - SPAWN_X[0], SPAWN_Y[1] - SPAWN_Y[0]])
@@ -191,23 +191,23 @@ class SO101Blocks(BaseEnv):
                 xy[crowded] = lo + span * torch.rand(int(crowded.sum()), 3, 2)
             return xy, SPAWN_YAW * torch.rand(b, 3)
 
-    def _cube_positions(self):
-        return torch.stack([self.cubes[n].pose.p for n in CUBE_NAMES], dim=1)
+    def _block_positions(self):
+        return torch.stack([self.blocks[n].pose.p for n in BLOCK_NAMES], dim=1)
 
     def layout(self):
         """What was just spawned, per env, in the form ``reset`` takes it back in.
 
-        The cubes stand upright until something pushes them, so a spawn quaternion is a
+        The blocks stand upright until something pushes them, so a spawn quaternion is a
         yaw and nothing else. Read it before stepping.
         """
-        quat = torch.stack([self.cubes[n].pose.q for n in CUBE_NAMES], dim=1)
-        return {"xy": self._cube_positions()[..., :2],
+        quat = torch.stack([self.blocks[n].pose.q for n in BLOCK_NAMES], dim=1)
+        return {"xy": self._block_positions()[..., :2],
                 "yaw": 2 * torch.atan2(quat[..., 3], quat[..., 0]),
                 "held": self.held, "target": self.target}
 
     def evaluate(self):
-        """The two gates: was the commanded cube lifted, and did it come to rest stacked."""
-        pos = self._cube_positions()
+        """The two gates: was the commanded block lifted, and did it come to rest stacked."""
+        pos = self._block_positions()
         rows = torch.arange(self.num_envs, device=self.device)
         held, target = pos[rows, self.held], pos[rows, self.target]
         spawn = self.spawns[rows, self.held]
@@ -220,7 +220,7 @@ class SO101Blocks(BaseEnv):
         stack_z = held[:, 2] - target[:, 2]
         stacked = (
             (stack_xy < STACK_XY_TOL)
-            & ((stack_z - CUBE_SIDE).abs() < STACK_Z_TOL)
+            & ((stack_z - BLOCK_SIDE).abs() < STACK_Z_TOL)
             & (moved < DISTURB_TOL).all(-1)
         )
         return {"success": stacked, "lifted": self.lifted.clone(),

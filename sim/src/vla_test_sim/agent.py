@@ -15,7 +15,7 @@ ARM_JOINTS = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wris
 JOINT_NAMES = [*ARM_JOINTS, "gripper"]
 
 # One width for open and one for closed, so a policy reads a single unambiguous pair. The
-# jaw faces stand 57 mm apart open and 22 mm apart closed, either side of the 30 mm cube.
+# jaw faces stand 57 mm apart open and 22 mm apart closed, either side of the 30 mm block.
 GRIPPER_OPEN = 0.6
 GRIPPER_CLOSED = 0.09
 
@@ -51,7 +51,7 @@ class SO101(BaseAgent):
                 upper=None,
                 # Generic stiffness (1000) lets the shoulder and elbow sag ~0.06 rad
                 # reaching down under gravity. The gripper stays soft, so closing inside
-                # the cube presses it rather than ejecting it.
+                # the block presses it rather than ejecting it.
                 stiffness=[6000.0, 6000.0, 4000.0, 6000.0, 8000.0, 300.0],
                 damping=[77.5, 77.5, 63.0, 77.5, 89.0, 30.0],
                 force_limit=[500.0, 500.0, 500.0, 500.0, 500.0, 50.0],

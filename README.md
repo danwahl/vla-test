@@ -4,7 +4,7 @@ An end-to-end example of training a vision-language-action policy on an [SO-101]
 
 ## Sim
 
-A [ManiSkill3](https://github.com/haosulab/ManiSkill) cell, with the arm under absolute joint-position control, three 30 mm colour cubes on a table, and two cameras on the intrinsic calibrated from the physical arm's InnoMaker U20CAM.
+A [ManiSkill3](https://github.com/haosulab/ManiSkill) cell, with the arm under absolute joint-position control, three 30 mm colour blocks on a table, and two cameras on the intrinsic calibrated from the physical arm's InnoMaker U20CAM.
 
 ```bash
 cd sim
