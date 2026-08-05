@@ -23,15 +23,13 @@ HOVER_DZ = 0.06          # clearance above the grasp and above the target stack
 RETRACT_DZ = 0.05        # leave the seated cube by this much, before the tool has to tilt
 REST_GAP = 0.001         # release this close to a seated stack, so it settles rather than drops
 
-# Opening slowly lets the placed cube settle while the jaw is still moving. Closing spends
-# its settling time afterwards instead: the grip loads only once the jaws have stopped, and
-# the in-grip offset is read the moment that hold ends.
+# Opening takes longer than closing: it lets the placed cube settle while the jaw is moving.
 CLOSE_STEPS = 6
-RELEASE_STEPS = 18
-GRIP_STEPS = 2
+RELEASE_STEPS = 8
 
-JOINT_VEL_MAX = 0.5      # rad/s commanded; faster starts slipping the cube in the grip
-PROBE_SAMPLES = 256      # resolution at which a move is measured to size its step count
+JOINT_VEL_MAX = 0.5      # rad/s commanded; well under what the arm holds, to keep it smooth
+RAMP_STEPS = 4           # steps spent reaching that speed at each end of a move
+PROBE_SAMPLES = 256      # resolution at which a move is measured to pace its steps
 
 
 def fold_yaw(yaw):
@@ -64,8 +62,7 @@ def _spline(u, knots, at):
     before, after = d[..., :-1, :], d[..., 1:, :]
 
     # A knot the path doubles back at, or arrives at flat, is a turning point and gets a
-    # flat slope. Everywhere else the slope is the harmonic mean of the two segments,
-    # which the gentler of them dominates; that is what holds the curve inside them.
+    # flat slope.
     onward = before * after > 0
     w1, w2 = 2 * h[1:] + h[:-1], h[1:] + 2 * h[:-1]
     ones = torch.ones_like(before)
@@ -113,18 +110,17 @@ class Oracle:
         return pos + GRASP_LATERAL * jaw_axis + self._up(GRASP_DZ)
 
     def _plan_grasp(self, pos, yaw):
-        """Solve the grasp on the quarter turn of the jaw that twists the wrist least.
+        """Solve the grasp on the quarter turn of the jaw that leaves the wrist near home.
 
         All four straddle the cube identically, so among the ones the arm can hold, take
-        the one nearest the wrist's current roll rather than the first that works.
+        the one whose roll is nearest the rest pose's.
         """
-        roll_now = self.command[:, 4]
         q_best, jaw_best = None, yaw.clone()
         cost = torch.full((self.n,), math.inf, device=self.device, dtype=torch.float64)
         for quarter in range(4):
             jaw = yaw + quarter * math.pi / 2
             q, reachable = ik(self._grasp_tcp(pos, jaw), jaw)
-            twist = (q[:, 4] - roll_now).abs()
+            twist = (q[:, 4] - HOME_QPOS[4]).abs()
             take = self._in_limits(q, reachable) & (twist < cost)
             q_best = q if q_best is None else torch.where(take[:, None], q, q_best)
             jaw_best = torch.where(take, jaw, jaw_best)
@@ -175,17 +171,11 @@ class Oracle:
         if self.on_step is not None:
             self.on_step(obs)
 
-    def _hold(self, steps):
-        for _ in range(steps):
-            self._act(self.command)
-
     def _path(self, keyposes, gripper, at):
         """The commanded path from the last command through ``keyposes``, sampled at ``at``.
 
         The path starts from the previous *command*, which keeps the command stream
-        continuous across moves. ``at`` runs over 0..1 of the move and is eased on its way
-        into the spline, zeroing the acceleration at the two ends as well as the velocity
-        the spline already pins there.
+        continuous across moves. ``at`` runs over 0..1 of the spline.
         """
         gripper = torch.as_tensor(gripper, dtype=torch.float64, device=self.device)
         # The jaws take their width at the first keypose and hold it, so they are open
@@ -200,25 +190,35 @@ class Oracle:
         span = (knots[:, 1:, :5] - knots[:, :-1, :5]).abs().amax((0, 2)).clamp(min=1e-6)
         u = torch.cat([torch.zeros(1, dtype=span.dtype, device=span.device),
                        span.cumsum(0)])
-        return _spline(u / u[-1], knots, _smoothstep(at))
+        return _spline(u / u[-1], knots, at)
 
     def _move(self, *keyposes, gripper):
         """Flow from the last command through ``keyposes`` as a single continuous move.
 
-        The spline's peak speed depends on how the keyposes fall, so sample the path
-        densely and take enough steps to keep every joint under ``JOINT_VEL_MAX``.
+        Steps are placed by distance travelled, so the move holds ``JOINT_VEL_MAX``
+        throughout, ramped over ``RAMP_STEPS`` at each end.
         """
         probe = torch.linspace(0, 1, PROBE_SAMPLES, dtype=torch.float64, device=self.device)
         path = self._path(keyposes, gripper, probe)
-        peak = float((path[:, 1:, :5] - path[:, :-1, :5]).abs().max()) * (PROBE_SAMPLES - 1)
-        steps = max(2, math.ceil(peak / (JOINT_VEL_MAX * self.env.control_timestep)))
+        # How far the joint with furthest to go gets, in the env with furthest to go.
+        travel = (path[:, 1:, :5] - path[:, :-1, :5]).abs().amax((0, 2))
+        covered = torch.cat([torch.zeros_like(travel[:1]), travel.cumsum(0)])
 
-        at = torch.linspace(0, 1, steps + 1, dtype=torch.float64, device=self.device)
-        for command in self._path(keyposes, gripper, at[1:]).unbind(1):
+        stride = JOINT_VEL_MAX * self.env.control_timestep
+        steps = max(2, math.ceil(float(covered[-1]) / stride) + RAMP_STEPS)
+        i = torch.arange(1, steps + 1, dtype=torch.float64, device=self.device)
+        speed = torch.minimum(i, steps + 1 - i).clamp(max=RAMP_STEPS + 1)
+        reach = covered[-1] * speed.cumsum(0) / speed.sum()
+
+        # Read back the spline parameter that has covered each of those distances.
+        j = torch.searchsorted(covered, reach).clamp(1, PROBE_SAMPLES - 1)
+        span = (covered[j] - covered[j - 1]).clamp(min=1e-12)
+        at = (j - 1 + (reach - covered[j - 1]) / span) / (PROBE_SAMPLES - 1)
+        for command in self._path(keyposes, gripper, at).unbind(1):
             self._act(command)
 
-    def _grip(self, width, steps, settle=0):
-        """Ease the jaws to ``width`` with the arm held where it is, then wait ``settle``.
+    def _grip(self, width, steps):
+        """Ease the jaws to ``width`` with the arm held where it is.
 
         The jaws work against a still arm, so this is the one place the arm stops.
         """
@@ -227,7 +227,6 @@ class Oracle:
         goal[:, 5] = width
         for i in range(1, steps + 1):
             self._act(start + _smoothstep(i / steps) * (goal - start))
-        self._hold(settle)
 
     # ---- one cycle --------------------------------------------------------
     def run(self, held, target, on_step=None):
@@ -243,9 +242,8 @@ class Oracle:
         q_clear, _ = ik_clearance(self._grasp_tcp(held_pos, jaw) + self._up(HOVER_DZ),
                                   jaw, self.limits)
 
-        # Three moves, parted only where the jaws have to work against a stationary arm.
         self._move(q_clear, q_grasp, gripper=GRIPPER_OPEN)
-        self._grip(GRIPPER_CLOSED, CLOSE_STEPS, GRIP_STEPS)
+        self._grip(GRIPPER_CLOSED, CLOSE_STEPS)
 
         # The cube is held rigidly, so aim its centre rather than the TCP. Read the
         # offset here, still fingers-down: the place is fingers-down too, so carrying it

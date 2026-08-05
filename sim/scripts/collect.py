@@ -3,12 +3,11 @@
     uv run --extra data python scripts/collect.py OUT
 
 Layouts are screened before anything is rendered: a batch is spawned, the oracle runs on
-state alone, and only the layouts it stacks are kept. The train ones are then replayed with
-the cameras on and written out as episodes. The eval ones are screened the same way and
-only written down, as the held-out set a policy is measured on.
+state alone, and only the layouts it stacks are kept. Those are then replayed with the
+cameras on and written out as episodes. The eval ones are screened the same way and only
+written down, as the held-out set a policy is measured on.
 
-Each batch covers the colour pairs still short of their quota, so the six of them come out
-even.
+Screening and recording alternate until every colour pair has its quota.
 """
 
 from __future__ import annotations
@@ -47,14 +46,10 @@ def prompt(held, target):
 
 
 def screen(env, need, seed):
-    """Spawn batches until every colour pair has ``need`` layouts the oracle stacks.
-
-    A batch is filled from the pairs still short, so the run stops as soon as the last
-    pair is met rather than carrying on for the ones already full.
-    """
+    """Spawn batches until every colour pair has ``need[pair]`` layouts the oracle stacks."""
     kept = {pair: [] for pair in PAIRS}
     batch = 0
-    while short := [pair for pair in PAIRS for _ in range(need - len(kept[pair]))]:
+    while short := [pair for pair in PAIRS for _ in range(need[pair] - len(kept[pair]))]:
         pairs = [short[i % len(short)] for i in range(env.num_envs)]
         env.reset(seed=seed + batch, options={"layout": {
             "held": [pair[0] for pair in pairs], "target": [pair[1] for pair in pairs]}})
@@ -63,10 +58,10 @@ def screen(env, need, seed):
         Oracle(env).run(env.held, env.target)
         won = env.evaluate()["success"].cpu().numpy()
         for i in np.flatnonzero(won):
-            if len(kept[pairs[i]]) < need:
+            if len(kept[pairs[i]]) < need[pairs[i]]:
                 kept[pairs[i]].append({key: value[i] for key, value in layout.items()})
         print(f"screen batch {batch}: {won.sum()}/{env.num_envs} stacked, "
-              f"{sum(len(v) for v in kept.values())}/{need * len(PAIRS)} kept", flush=True)
+              f"{sum(len(v) for v in kept.values())}/{sum(need.values())} kept", flush=True)
         batch += 1
     return kept
 
@@ -96,7 +91,7 @@ def rollout(env, layouts):
     return commands, snapshots, env.evaluate()["success"].cpu().numpy()
 
 
-def record(env, layouts, dataset):
+def record(env, layouts, dataset, quota):
     """Replay ``layouts`` and save each one as an episode, returning the ones written.
 
     Every env in a batch runs the same phases, so an episode is as long as the batch's
@@ -109,9 +104,11 @@ def record(env, layouts, dataset):
         commands, snapshots, won = rollout(env, padded)
 
         for i, item in enumerate(batch):
-            if not won[i]:
+            pair = (int(item["held"]), int(item["target"]))
+            if not won[i] or not quota[pair]:
                 continue
-            task = prompt(int(item["held"]), int(item["target"]))
+            quota[pair] -= 1
+            task = prompt(*pair)
             for command, (qpos, *images) in zip(commands, snapshots[:-1], strict=True):
                 dataset.add_frame({
                     "observation.state": qpos[i].astype(np.float32),
@@ -122,8 +119,8 @@ def record(env, layouts, dataset):
                 })
             dataset.save_episode()
             written.append(item)
-        print(f"record {len(written)}/{len(layouts)} episodes, "
-              f"{len(commands)} frames each", flush=True)
+        print(f"record {len(written)} episodes, {len(commands)} frames each, "
+              f"{sum(quota.values())} still owed", flush=True)
     return written
 
 
@@ -156,24 +153,28 @@ def main():
     torch.manual_seed(args.seed)
     state_env = gym.make("SO101Blocks-v1", num_envs=args.envs).unwrapped
     fps = round(1 / state_env.control_timestep)
-    train = screen(state_env, args.per_pair, args.seed)
-    held_out = screen(state_env, args.eval_per_pair, args.seed + 10_000)
-    state_env.close()
-
-    # Train layouts run pair by pair; the held-out ones cycle, so a truncated eval still
-    # covers all six.
-    ordered = [item for pair in PAIRS for item in train[pair]]
-    interleaved = [held_out[pair][i] for i in range(args.eval_per_pair) for pair in PAIRS]
-
     dataset = LeRobotDataset.create(repo_id=args.repo_id, fps=fps, features=FEATURES,
                                     root=args.out, robot_type="so101",
                                     # H.264 rather than the AV1 default: every loader
                                     # downstream of here decodes it.
                                     rgb_encoder=RGBEncoderConfig(vcodec="h264"))
     render_env = gym.make("SO101Blocks-v1", num_envs=args.envs, obs_mode="rgb").unwrapped
-    written = record(render_env, ordered, dataset)
+
+    quota = dict.fromkeys(PAIRS, args.per_pair)
+    written, seed = [], args.seed
+    while any(quota.values()):
+        pool = screen(state_env, quota, seed)
+        written += record(render_env, [item for pair in PAIRS for item in pool[pair]],
+                          dataset, quota)
+        seed += 1_000
     render_env.close()
     dataset.finalize()
+
+    # Carrying on from the seed the loop reached keeps the held-out spawns off the train
+    # ones. They cycle through the pairs, so a truncated eval still covers all six.
+    held_out = screen(state_env, dict.fromkeys(PAIRS, args.eval_per_pair), seed)
+    state_env.close()
+    interleaved = [held_out[pair][i] for i in range(args.eval_per_pair) for pair in PAIRS]
 
     meta = args.out / "meta"
     write_layouts(meta / "train_layouts.jsonl", written, "episode_index")

@@ -25,4 +25,4 @@ uv sync --extra data
 uv run --extra data python scripts/collect.py OUT
 ```
 
-360 episodes in [LeRobot](https://github.com/huggingface/lerobot) v3.0 format, 60 for each of the six colour orderings, around 200 frames each at 10 Hz: the five arm joints and the gripper as `observation.state` and `action`, and 480x480 H.264 from the wrist and top cameras. `meta/train_layouts.jsonl` records the spawn each episode started from, and `meta/eval_layouts.jsonl` 150 more, held out, to measure a policy on.
+360 episodes in [LeRobot](https://github.com/huggingface/lerobot) v3.0 format at 10 Hz, 60 for each of the six colour orderings: the five arm joints and the gripper as `observation.state` and `action`, and 480x480 H.264 from the wrist and top cameras. `meta/train_layouts.jsonl` records the spawn each episode started from, and `meta/eval_layouts.jsonl` 150 more, held out, to measure a policy on.

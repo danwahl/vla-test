@@ -14,16 +14,15 @@ from mani_skill.agents.registration import register_agent
 ARM_JOINTS = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll"]
 JOINT_NAMES = [*ARM_JOINTS, "gripper"]
 
-# One width for open and one for closed, so a policy reads a single unambiguous pair.
-GRIPPER_OPEN = 0.7
-GRIPPER_CLOSED = 0.09       # a few mm inside the 30 mm cube
+# One width for open and one for closed, so a policy reads a single unambiguous pair. The
+# jaw faces stand 57 mm apart open and 22 mm apart closed, either side of the 30 mm cube.
+GRIPPER_OPEN = 0.6
+GRIPPER_CLOSED = 0.09
 
 BASE_POSE = sapien.Pose(p=[0.0, 0.0, 0.74])
 
-# The tool over the middle of the spawn box, 140 mm up, at the flattest tilt that reaches
-# there (see kinematics.ik_clearance). The wrist camera takes in the whole spawn box from
-# here, and the jaws start at the width the cycle opens to.
-HOME_QPOS = np.array([0.0009, -0.7083, 0.2796, 1.6270, -1.5212, GRIPPER_OPEN], np.float32)
+# The arm folded back over its own base, the physical SO-101's rest pose.
+HOME_QPOS = np.array([-0.1414, 0.3624, -1.1317, 1.5485, -0.0915, GRIPPER_OPEN], np.float32)
 
 _GRIP = {"material": "grip", "patch_radius": 0.1, "min_patch_radius": 0.1}
 
@@ -51,8 +50,8 @@ class SO101(BaseAgent):
                 lower=None,
                 upper=None,
                 # Generic stiffness (1000) lets the shoulder and elbow sag ~0.06 rad
-                # reaching down under gravity. The gripper stays soft so closing to 0.0
-                # presses the cube rather than ejecting it.
+                # reaching down under gravity. The gripper stays soft, so closing inside
+                # the cube presses it rather than ejecting it.
                 stiffness=[6000.0, 6000.0, 4000.0, 6000.0, 8000.0, 300.0],
                 damping=[77.5, 77.5, 63.0, 77.5, 89.0, 30.0],
                 force_limit=[500.0, 500.0, 500.0, 500.0, 500.0, 50.0],

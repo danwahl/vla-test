@@ -62,9 +62,7 @@ DISTURB_TOL = 0.015
 TASK_PROMPT = "stack the {held} cube on the {target} cube"
 
 
-# Long enough for one oracle cycle and room to spare for a policy that wanders: the cycle
-# runs a little over 200 steps, and grows slightly with the batch, since a move is paced by
-# the env that has furthest to travel.
+# Several times one oracle cycle, leaving room for a policy that wanders.
 @register_env("SO101Blocks-v1", max_episode_steps=400)
 class SO101Blocks(BaseEnv):
     SUPPORTED_ROBOTS: ClassVar[list[str]] = ["so101"]
@@ -73,6 +71,8 @@ class SO101Blocks(BaseEnv):
     SUPPORTED_REWARD_MODES: ClassVar[tuple[str, ...]] = ("none",)
 
     def __init__(self, *args, robot_uids="so101", **kwargs):
+        # Shadows are the depth cue in the wrist view.
+        kwargs.setdefault("enable_shadow", True)
         super().__init__(*args, robot_uids=robot_uids, **kwargs)
 
     @property
