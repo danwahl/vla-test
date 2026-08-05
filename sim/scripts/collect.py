@@ -22,10 +22,10 @@ import torch
 from lerobot.configs.video import RGBEncoderConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-import vla_test_sim  # noqa: F401  (registers the env)
-from vla_test_sim.agent import JOINT_NAMES
-from vla_test_sim.env import BLOCK_NAMES, BLOCK_REST_Z, IMAGE_SIZE, SPAWN_YAW, TASK_PROMPT
-from vla_test_sim.oracle import Oracle
+import sim  # noqa: F401  (registers the env)
+from sim.agent import JOINT_NAMES
+from sim.env import BLOCK_NAMES, BLOCK_REST_Z, IMAGE_SIZE, SPAWN_YAW, TASK_PROMPT
+from sim.oracle import Oracle
 
 CAMERAS = ("wrist", "top")
 PAIRS = [(held, target) for held in range(3) for target in range(3) if held != target]

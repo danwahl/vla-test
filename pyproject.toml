@@ -1,0 +1,22 @@
+# One lockfile across both environments, so the checkpoint `train` produces loads under the
+# same torch and lerobot that `sim` evaluates it with.
+[tool.uv.workspace]
+members = ["sim", "train"]
+
+[dependency-groups]
+dev = [
+    "pillow>=12.3.0",
+    "pytest>=8",
+    "ruff>=0.6",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["sim/tests"]
+
+[tool.ruff]
+line-length = 100
+# Where the first-party package lives, for import sorting.
+src = ["sim/src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "C4", "RUF"]

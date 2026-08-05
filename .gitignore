@@ -15,3 +15,6 @@ outputs/
 data/
 checkpoints/
 *.mp4
+
+# Secrets
+.env

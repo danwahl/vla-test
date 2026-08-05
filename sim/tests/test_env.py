@@ -1,9 +1,9 @@
 import gymnasium as gym
 import torch
 
-import vla_test_sim  # noqa: F401  (registers the env)
-from vla_test_sim.env import IMAGE_SIZE
-from vla_test_sim.oracle import Oracle
+import sim  # noqa: F401  (registers the env)
+from sim.env import IMAGE_SIZE
+from sim.oracle import Oracle
 
 
 def test_env_resets_steps_and_renders_both_cameras():

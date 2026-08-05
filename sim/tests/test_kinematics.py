@@ -2,8 +2,8 @@ import gymnasium as gym
 import numpy as np
 import torch
 
-import vla_test_sim  # noqa: F401  (registers the env)
-from vla_test_sim.kinematics import TILT_DOWN, ik
+import sim  # noqa: F401  (registers the env)
+from sim.kinematics import TILT_DOWN, ik
 
 
 def _tcp(env, q):

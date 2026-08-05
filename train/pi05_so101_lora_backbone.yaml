@@ -1,0 +1,62 @@
+# pi0.5 with LoRA on the language backbone, fine-tuned on the SO-101 block-stack
+# demonstrations. Stock lerobot-train runs this file as it stands:
+#
+#   uv run lerobot-train --config_path=train/pi05_so101_lora_backbone.yaml \
+#                        --output_dir=... --job_name=...
+
+policy:
+  # `path`, not `pretrained_path`. Under `path` lerobot applies the rest of this block as
+  # overrides on top of pi05_base's published config; under `pretrained_path` the block is
+  # decoded on its own and anything left out falls back to the PI05Config dataclass instead
+  # of to pi05_base's value.
+  path: lerobot/pi05_base
+
+  # Both of these are what pi05_base publishes, so both have to be said. push_to_hub then
+  # fails validate() for a missing repo_id.
+  push_to_hub: false
+  dtype: bfloat16
+
+  # Trades step rate for activation memory, which is what fits the run on one GPU.
+  gradient_checkpointing: true
+
+  # Level with `steps` below: a shorter decay horizon flattens the learning rate early, a
+  # longer one leaves it high at the end.
+  scheduler_decay_steps: 20000
+
+dataset:
+  repo_id: vla-test/so101_block_stack_sim
+  # Where sim/scripts/collect.py wrote it.
+  root: /data/datasets/so101_block_stack_sim
+
+# LoRA the gemma_2b backbone, train the action expert and the projection heads densely, and
+# leave SigLIP frozen.
+peft:
+  method_type: LORA
+  r: 32
+  # peft defaults this to 8, which at r=32 is a different model rather than a nearby one.
+  lora_alpha: 64
+  target_modules: '.*\.paligemma\.model\.language_model\.layers\.\d+\.(self_attn\.[qkvo]_proj|mlp\.(gate|up|down)_proj)'
+  # Matched by bare endswith, so each entry names a subtree root. `gemma_expert.model` and
+  # not `gemma_expert`, which also takes in the expert's dead lm_head.
+  full_training_modules:
+    - gemma_expert.model
+    - action_in_proj
+    - action_out_proj
+    - time_mlp_in
+    - time_mlp_out
+
+# The two cameras into pi0.5's DROID slots, so the pretrained image-position embeddings line
+# up. This bakes into the saved processor, so eval reads it back with no remapping.
+rename_map:
+  observation.images.top: observation.images.base_0_rgb
+  observation.images.wrist: observation.images.left_wrist_0_rgb
+
+steps: 20000
+batch_size: 4
+save_freq: 10000
+
+# Runs land in whatever account WANDB_API_KEY belongs to. Checkpoints stay on disk.
+wandb:
+  enable: true
+  project: vla-test
+  disable_artifact: true

@@ -1,0 +1,12 @@
+[project]
+name = "vla-test-train"
+version = "0.1.0"
+description = "pi0.5 fine-tuning on the SO-101 block-stack demonstrations."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "lerobot[pi,peft,training]==0.6.0",
+]
+
+[tool.uv]
+# A dependency set rather than an importable package: the recipe is the deliverable.
+package = false
