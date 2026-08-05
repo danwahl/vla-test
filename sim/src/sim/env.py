@@ -62,8 +62,8 @@ DISTURB_TOL = 0.015
 TASK_PROMPT = "stack the {held} block on the {target} block"
 
 
-# Several times one oracle cycle, leaving room for a policy that wanders.
-@register_env("SO101BlockStack-v1", max_episode_steps=400)
+# Half again the oracle's cycle, and well past where a fine-tuned policy settles.
+@register_env("SO101BlockStack-v1", max_episode_steps=200)
 class SO101BlockStack(BaseEnv):
     SUPPORTED_ROBOTS: ClassVar[list[str]] = ["so101"]
     # ManiSkill defaults to normalized_dense, which raises on the first step() until

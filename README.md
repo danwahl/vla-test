@@ -45,3 +45,14 @@ uv run python train/merge.py \
     /data/checkpoints/pi05_so101_block_stack_sim/checkpoints/last/pretrained_model \
     /data/checkpoints/pi05_so101_block_stack_sim/merged
 ```
+
+## Evaluation
+
+The checkpoint is rolled out on the 150 held-out layouts and scored by the gates that screened the oracle. Chunks are stitched with [Real-Time Chunking](https://www.physicalintelligence.company/research/real_time_chunking).
+
+```bash
+uv run python sim/scripts/eval.py \
+    /data/checkpoints/pi05_so101_block_stack_sim/checkpoints/last/pretrained_model
+```
+
+`--video DIR` records each batch.

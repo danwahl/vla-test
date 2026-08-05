@@ -1,6 +1,6 @@
 """Collect oracle demonstrations into a LeRobot v3.0 dataset.
 
-    uv run --extra data python scripts/collect.py OUT
+    uv run python sim/scripts/collect.py OUT
 
 Layouts are screened before anything is rendered: a batch is spawned, the oracle runs on
 state alone, and only the layouts it stacks are kept. Those are then replayed with the
