@@ -7,6 +7,7 @@ from typing import ClassVar
 
 import numpy as np
 import sapien
+import torch
 from mani_skill.agents.base_agent import BaseAgent, Keyframe
 from mani_skill.agents.controllers import PDJointPosControllerConfig
 from mani_skill.agents.registration import register_agent
@@ -68,7 +69,17 @@ class SO101(BaseAgent):
         self.tcp_link = self.robot.links_map["gripper_frame_link"]
         self.wrist_cam_link = self.robot.links_map["wrist_camera_frame_link"]
         self.top_cam_link = self.robot.links_map["top_camera_frame_link"]
+        self.jaw_links = [self.robot.links_map[name]
+                          for name in ("gripper_link", "moving_jaw_so101_v1_link")]
 
     @property
     def tcp_pose(self):
         return self.tcp_link.pose
+
+    def is_grasping(self, actor, min_force=0.5):
+        """Whether both jaws are pressing on ``actor``."""
+        forces = torch.stack([
+            torch.linalg.norm(self.scene.get_pairwise_contact_forces(link, actor), dim=1)
+            for link in self.jaw_links
+        ])
+        return (forces >= min_force).all(dim=0)

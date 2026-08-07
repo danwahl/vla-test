@@ -1,0 +1,43 @@
+env_type: maniskill
+
+total_num_envs: null
+
+# Two cameras and the 6-D joint state, in the slots the checkpoint was fine-tuned on.
+wrap_obs_mode: so101
+use_full_state: False
+auto_reset: False
+ignore_terminations: False
+
+# The env banks its milestones, so the level only rises and this difference is never
+# negative.
+use_rel_reward: True
+reward_mode: milestone
+
+seed: 0
+group_size: 1
+use_fixed_reset_state_ids: False
+
+max_episode_steps: 200
+max_steps_per_rollout_epoch: 200
+
+video_cfg:
+  save_video: False
+  info_on_video: True
+  video_base_dir: ${runner.logger.log_path}/video/train
+
+enable_offload: False
+
+init_params:
+  id: SO101BlockStack-v1
+  num_envs: null
+  obs_mode: rgb
+  # Absolute joint targets, which is what the policy emits.
+  control_mode: pd_joint_pos
+  sim_backend: gpu
+  sim_config:
+    sim_freq: 400
+    control_freq: 10
+  max_episode_steps: ${env.train.max_episode_steps}
+  sensor_configs:
+    shader_pack: default
+  render_mode: all

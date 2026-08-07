@@ -59,6 +59,13 @@ STACK_XY_TOL = 0.018
 STACK_Z_TOL = 0.012
 DISTURB_TOL = 0.015
 
+# Milestones on the way to a stack, and what each is worth. They are banked, so the reward
+# level only ever rises and a step-to-step difference is never negative. Carrying is scored
+# on a looser radius than seating, which is what puts a gradient across the final approach.
+CARRY_XY_TOL = 2 * STACK_XY_TOL
+MILESTONE_WEIGHTS = {"grasped": 0.1, "lifted": 0.3, "carried": 0.3, "stacked": 1.0}
+HOLD_BONUS = 0.01
+
 TASK_PROMPT = "stack the {held} block on the {target} block"
 
 
@@ -136,6 +143,16 @@ class SO101BlockStack(BaseEnv):
                 for shape in body.collision_shapes:
                     shape.physical_material = self._block_friction
 
+        # Per-env state spans the whole batch and is written by index, so resetting some
+        # envs while the rest keep running leaves those others untouched.
+        with torch.device(self.device):
+            self.held = torch.zeros(self.num_envs, dtype=torch.long)
+            self.target = torch.zeros(self.num_envs, dtype=torch.long)
+            self.spawns = torch.zeros(self.num_envs, 3, 3)
+            self.milestones = {name: torch.zeros(self.num_envs, dtype=torch.bool)
+                               for name in MILESTONE_WEIGHTS}
+            self.hold_steps = torch.zeros(self.num_envs)
+
     def _initialize_episode(self, env_idx, options):
         with torch.device(self.device):
             b = len(env_idx)
@@ -171,11 +188,13 @@ class SO101BlockStack(BaseEnv):
                 self.blocks[name].set_linear_velocity(torch.zeros(b, 3))
                 self.blocks[name].set_angular_velocity(torch.zeros(b, 3))
 
-            self.held, self.target = held, target
-            self.spawns = torch.stack(
+            self.held[env_idx], self.target[env_idx] = held, target
+            self.spawns[env_idx] = torch.stack(
                 [self.blocks[n].pose.p[env_idx] for n in BLOCK_NAMES], dim=1
             )
-            self.lifted = torch.zeros(b, dtype=torch.bool)
+            for reached in self.milestones.values():
+                reached[env_idx] = False
+            self.hold_steps[env_idx] = 0.0
 
     def _sample_layout(self, b):
         """Three block spawns, resampled until none of them overlap."""
@@ -205,14 +224,21 @@ class SO101BlockStack(BaseEnv):
                 "yaw": 2 * torch.atan2(quat[..., 3], quat[..., 0]),
                 "held": self.held, "target": self.target}
 
+    def prompts(self):
+        """What each env in the batch was asked to do."""
+        return [TASK_PROMPT.format(held=BLOCK_NAMES[held], target=BLOCK_NAMES[target])
+                for held, target in zip(self.held.tolist(), self.target.tolist(), strict=True)]
+
     def evaluate(self):
-        """The two gates: was the commanded block lifted, and did it come to rest stacked."""
+        """The two gates -- was the commanded block lifted, and is it seated on its
+        target -- alongside the milestone reward banked on the way.
+
+        Seating is geometry alone, so it reads true while the jaws are still closed.
+        """
         pos = self._block_positions()
         rows = torch.arange(self.num_envs, device=self.device)
         held, target = pos[rows, self.held], pos[rows, self.target]
         spawn = self.spawns[rows, self.held]
-
-        self.lifted |= (held[:, 2] - spawn[:, 2]) > LIFT_DZ
 
         moved = torch.linalg.norm((pos - self.spawns)[..., :2], dim=-1)
         moved[rows, self.held] = 0.0
@@ -223,5 +249,22 @@ class SO101BlockStack(BaseEnv):
             & ((stack_z - BLOCK_SIDE).abs() < STACK_Z_TOL)
             & (moved < DISTURB_TOL).all(-1)
         )
-        return {"success": stacked, "lifted": self.lifted.clone(),
+        lifted = (held[:, 2] - spawn[:, 2]) > LIFT_DZ
+        grasping = torch.stack(
+            [self.agent.is_grasping(self.blocks[name]) for name in BLOCK_NAMES], dim=1
+        )[rows, self.held]
+
+        for name, reached in [("grasped", grasping), ("lifted", lifted),
+                              ("carried", lifted & (stack_xy < CARRY_XY_TOL)),
+                              ("stacked", stacked)]:
+            self.milestones[name] |= reached
+        self.hold_steps += stacked.float()
+
+        reward = HOLD_BONUS * self.hold_steps
+        for name, weight in MILESTONE_WEIGHTS.items():
+            reward = reward + weight * self.milestones[name]
+
+        return {"success": stacked, "reward": reward,
+                "lifted": self.milestones["lifted"].clone(),
+                "grasped": self.milestones["grasped"].clone(),
                 "stack_xy": stack_xy, "stack_z": stack_z}
