@@ -59,7 +59,7 @@ uv run python sim/scripts/eval.py \
 
 ## Reinforcement learning
 
-The fine-tuned checkpoint is the warm start for PPO in [RLinf](https://github.com/RLinf/RLinf), which drives the same env in parallel and scores four milestones: a grasp, a lift, the block carried over its target, and the stack itself, which counts once the block is seated and out of the jaws. Each is banked once reached, so the reward only rises and a step-to-step difference is non-negative. A small bonus accrues for every step the stack stands.
+The fine-tuned checkpoint is the warm start for PPO in [RLinf](https://github.com/RLinf/RLinf), which drives the same env in parallel and scores the task and nothing else: a step is worth 1 while the commanded block is seated on its target and out of the jaws, and 0 otherwise. RLinf differences that level, so an episode's rewards sum to 1 if the stack is still standing at the end and 0 if it is not, which makes the return the same number the policy is graded on.
 
 `sim/scripts/rl_layouts.py` screens a pool of spawns the oracle stacks, cycling the colour pairs so all six are covered evenly:
 
@@ -77,41 +77,29 @@ uv run python rl/convert.py \
     /data/checkpoints/pi05_so101_block_stack_sim/openpi
 ```
 
-RLinf is not vendored. In a checkout of it (this was written against `d3aff54`), four files go in:
+RLinf is not vendored. It dispatches environments, observations, actions and control modes through if-else chains rather than a registry, and its own guide for adding an environment says to edit them in place, so `rl/patch.py` does that against a checkout:
 
-| from | to |
-|---|---|
-| `rl/pi05_so101_ppo.yaml` | `examples/embodiment/config/` |
-| `rl/env/so101_block_stack.yaml` | `examples/embodiment/config/env/` |
-| `rl/task.py` | `rlinf/envs/maniskill/tasks/so101_block_stack.py` |
-| `rl/dataconfig.py` | `rlinf/models/embodiment/openpi/dataconfig/so101_block_stack.py` |
-
-and four call sites take a case for this arm. `So101BlockStackDataConfig` joins the registry in `.../dataconfig/__init__.py` under the name `pi05_so101_block_stack`, whose prefix is where the actor reads pi0.5's language-token budget; `rlinf/envs/action_utils.py` returns joint-space actions unchanged; `rlinf/config.py` resolves this robot to `pd_joint_pos`; and `rlinf/envs/maniskill/maniskill_env.py` gains the observation and reward branches the env config names:
-
-```python
-if wrap_obs_mode == "so101":
-    from rlinf.envs.maniskill.tasks import so101_block_stack
-
-    return so101_block_stack.wrap_obs(raw_obs, self.env.unwrapped)
-```
-```python
-elif getattr(self.cfg, "reward_mode", "default") == "milestone":
-    reward = info["reward"]
+```bash
+git clone https://github.com/RLinf/RLinf && git -C RLinf checkout d3aff54
+uv run python rl/patch.py RLinf
 ```
 
-Both entrypoints run from that checkout, and take the paths to this one and to the converted weights:
+It copies `rl/task.py` and `rl/dataconfig.py` in, and takes a case for this arm in four places, 22 lines in all: `rlinf/config.py` resolves the robot to `pd_joint_pos`, `rlinf/envs/action_utils.py` passes joint-space actions through unchanged as it already does for the panda arms, `rlinf/envs/maniskill/maniskill_env.py` gains the observation branch the env config names, and `So101BlockStackDataConfig` joins the registry in `.../dataconfig/__init__.py` as `pi05_so101_block_stack`, whose prefix is where the actor reads pi0.5's language-token budget. Each edit asserts a single match of its anchor, so a checkout that has moved on fails there rather than halfway through a run, and re-running is a no-op.
+
+The run config stays here. Hydra reads it from `rl/`, and the `searchpath` in it picks up RLinf's own config tree for the pieces this one builds on:
 
 ```bash
 export VLA_TEST_DIR=/path/to/vla-test
 export SFT_CKPT=/data/checkpoints/pi05_so101_block_stack_sim/openpi
+export RL_LAYOUTS=$VLA_TEST_DIR/rl_layouts.jsonl
 export EMBODIED_PATH=$PWD/examples/embodiment
 
 # score the warm start
 python evaluations/eval_embodied_agent.py \
-    --config-path $EMBODIED_PATH/config --config-name pi05_so101_ppo
+    --config-path $VLA_TEST_DIR/rl --config-name pi05_so101_ppo
 # PPO from it
 python $EMBODIED_PATH/train_embodied_agent.py \
-    --config-path $EMBODIED_PATH/config --config-name pi05_so101_ppo
+    --config-path $VLA_TEST_DIR/rl --config-name pi05_so101_ppo
 ```
 
-The actor and the rollout are held on one 80 GB card, each offloaded while the other runs. Scoring builds the env and the rollout and no actor, and reads the model from `rollout.model`, which mirrors the actor's. It draws the spawns the env samples, so it is the number the climb is read against, and a different population from the screened layouts `sim/scripts/eval.py` replays.
+The actor and the rollout are held on one card, each offloaded while the other runs. Scoring builds the env and the rollout and no actor, and reads the model from `rollout.model`, which mirrors the actor's. Both draw from `RL_LAYOUTS`, so the score is the number the climb is read against; `sim/scripts/eval.py` replays a different screened set, held out from the training demonstrations.

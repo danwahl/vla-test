@@ -64,13 +64,6 @@ STACK_XY_TOL = 0.018
 STACK_Z_TOL = 0.012
 DISTURB_TOL = 0.015
 
-# Milestones on the way to a stack, and what each is worth. They are banked, so the reward
-# level only ever rises and a step-to-step difference is never negative. Carrying is scored
-# on a looser radius than seating, which is what puts a gradient across the final approach.
-CARRY_XY_TOL = 2 * STACK_XY_TOL
-MILESTONE_WEIGHTS = {"grasped": 0.1, "lifted": 0.3, "carried": 0.3, "stacked": 1.0}
-HOLD_BONUS = 0.01
-
 TASK_PROMPT = "stack the {held} block on the {target} block"
 
 
@@ -190,9 +183,7 @@ class SO101BlockStack(BaseEnv):
             self.target = torch.zeros(self.num_envs, dtype=torch.long)
             self.spawns = torch.zeros(self.num_envs, 3, 3)
             self.milestones = {name: torch.zeros(self.num_envs, dtype=torch.bool)
-                               for name in MILESTONE_WEIGHTS}
-            self.hold_steps = torch.zeros(self.num_envs)
-            self.scored = torch.full((self.num_envs,), -1, dtype=torch.int32)
+                               for name in ("grasped", "lifted")}
 
     def _initialize_episode(self, env_idx, options):
         with torch.device(self.device):
@@ -237,8 +228,6 @@ class SO101BlockStack(BaseEnv):
             )
             for reached in self.milestones.values():
                 reached[env_idx] = False
-            self.hold_steps[env_idx] = 0.0
-            self.scored[env_idx] = -1
 
     def _draw(self, b):
         """``b`` layouts taken at random from the pool. A given layout overrides them."""
@@ -279,11 +268,11 @@ class SO101BlockStack(BaseEnv):
                 in zip(self.held.tolist(), self.target.tolist(), strict=True)]
 
     def evaluate(self):
-        """The two gates -- was the commanded block lifted, and is it stacked on its
-        target -- alongside the reward its milestones have earned.
+        """Whether the commanded block was lifted, and whether it is stacked on its target.
 
-        A stack is seated and out of the jaws, so reaching stacking height while still
-        holding the block earns the carry and nothing more.
+        A stack is seated and out of the jaws, so a block held at stacking height does not
+        count. ``grasped`` and ``lifted`` latch; ``seated`` and ``success`` are read fresh
+        each step.
         """
         pos = self._block_positions()
         rows = torch.arange(self.num_envs, device=self.device)
@@ -305,22 +294,10 @@ class SO101BlockStack(BaseEnv):
         )[rows, self.held]
         stacked = seated & ~grasping
 
-        # ManiSkill scores a step once, but nothing stops another reader calling this
-        # again, so the gates bank on the first call for each step and reading cannot
-        # advance the reward.
-        fresh = self._elapsed_steps != self.scored
-        self.scored = self._elapsed_steps.clone()
-        for name, reached in [("grasped", grasping), ("lifted", lifted),
-                              ("carried", lifted & (stack_xy < CARRY_XY_TOL)),
-                              ("stacked", stacked)]:
-            self.milestones[name] |= reached & fresh
-        self.hold_steps += (stacked & fresh).float()
+        for name, reached in [("grasped", grasping), ("lifted", lifted)]:
+            self.milestones[name] |= reached
 
-        reward = HOLD_BONUS * self.hold_steps
-        for name, weight in MILESTONE_WEIGHTS.items():
-            reward = reward + weight * self.milestones[name]
-
-        return {"success": stacked, "reward": reward, "seated": seated,
+        return {"success": stacked, "seated": seated,
                 "lifted": self.milestones["lifted"].clone(),
                 "grasped": self.milestones["grasped"].clone(),
                 "stack_xy": stack_xy, "stack_z": stack_z}

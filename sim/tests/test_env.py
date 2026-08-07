@@ -62,11 +62,4 @@ def test_oracle_stacks_a_block_inside_the_episode_limit():
     Oracle(env).run(env.held, env.target, on_step=steps.append)
     assert len(steps) <= gym.spec("SO101BlockStack-v1").max_episode_steps
     assert env.evaluate()["success"].any()
-
-    # ManiSkill scores a step once, and the reward banks as it goes, so a second reader
-    # must not bank it again.
-    first = env.evaluate()["reward"]
-    second = env.evaluate()["reward"]
-    assert first.max() > 0, "a stacked episode has banked something to double"
-    assert torch.equal(first, second), "reading twice banked it twice"
     env.close()

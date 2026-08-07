@@ -84,8 +84,6 @@ algorithm:
 env:
   group_name: "EnvGroup"
 
-  # The spawn box sits inside the arm's reach, so the sampled layouts are ones the task can
-  # be done from and no separate screen is needed.
   train:
     rollout_epoch: 1
     total_num_envs: 32
