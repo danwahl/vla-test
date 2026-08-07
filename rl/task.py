@@ -2,18 +2,10 @@
 rollout reads off it.
 
 Copied to ``rlinf/envs/maniskill/tasks/so101_block_stack.py``, where RLinf imports every
-module at startup, so the arm has to be importable from there. ``VLA_TEST_DIR`` points at
-this repository and puts ``sim/src`` on the path.
+module at startup, so the arm reaches it from ``PYTHONPATH``.
 """
 
-import os
-import sys
-from pathlib import Path
-
 import torch
-
-if "VLA_TEST_DIR" in os.environ:
-    sys.path.insert(0, str(Path(os.environ["VLA_TEST_DIR"]) / "sim" / "src"))
 
 import sim  # noqa: F401  registers SO101BlockStack-v1 and the arm
 

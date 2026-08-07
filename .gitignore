@@ -15,6 +15,7 @@ outputs/
 data/
 checkpoints/
 *.mp4
+rl_layouts.jsonl
 
 # Secrets
 .env
