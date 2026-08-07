@@ -67,7 +67,7 @@ The fine-tuned checkpoint is the warm start for PPO in [RLinf](https://github.co
 uv run python sim/scripts/rl_layouts.py rl_layouts.jsonl --count 5000
 ```
 
-The env takes `layouts=PATH` and draws each reset from the file, which keeps the spawns the oracle cannot stack out of the reward and fixes the population an eval is read against. A layout passed to `reset` still overrides the draw.
+The env takes `layouts=PATH` and draws each reset from the file, which keeps the spawns the oracle cannot stack out of the reward and fixes the population an eval is read against.
 
 `rl/convert.py` rewrites a merged checkpoint into the layout RLinf's openpi actor loads:
 
@@ -77,7 +77,7 @@ uv run python rl/convert.py \
     /data/checkpoints/pi05_so101_block_stack_sim/openpi
 ```
 
-RLinf is `rl/rlinf`, a submodule pinned to the commit this was written against. The run happens in its `rlinf/rlinf:agentic-rlinf0.4-maniskill_libero` image, which carries a venv per embodiment; the openpi one already has ManiSkill, openpi and a CUDA torch, so only this repository's own packages go in. `rl/patch.py` then copies two modules into the submodule and edits four call sites, because RLinf dispatches environments, observations, actions and control modes through if-else chains rather than a registry, and its own guide for adding an environment says to edit them in place. It says which four and why.
+RLinf is `rl/rlinf`, a submodule pinned to the commit this was written against. The run happens in its `rlinf/rlinf:agentic-rlinf0.4-maniskill_libero` image, which carries a venv per embodiment; the openpi one already has ManiSkill, openpi and a CUDA torch, so only this repository's own packages go in. `rl/patch.py` copies two modules into the submodule and edits four call sites.
 
 ```bash
 source /opt/venv/openpi/bin/activate
@@ -97,6 +97,4 @@ python $EMBODIED_PATH/train_embodied_agent.py \
     --config-path $VLA_TEST_DIR/rl --config-name pi05_so101_ppo
 ```
 
-The run config stays here: hydra reads it from `rl/`, and the `searchpath` in it picks up RLinf's own config tree for the pieces this one builds on.
-
-The actor and the rollout are held on one card, each offloaded while the other runs. Scoring builds the env and the rollout and no actor, and reads the model from `rollout.model`, which mirrors the actor's. Both draw from `RL_LAYOUTS`, so the score is the number the climb is read against; `sim/scripts/eval.py` replays a different screened set, held out from the training demonstrations.
+The run config stays here; its `searchpath` picks up RLinf's own config tree for the pieces it builds on.

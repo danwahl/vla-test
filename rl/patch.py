@@ -3,14 +3,14 @@
     uv run python rl/patch.py
 
 RLinf dispatches environments, observations, actions and control modes through if-else
-chains rather than a registry, and its own guide for adding an environment says to edit
-them in place. So this copies two modules in and edits four call sites. It is idempotent,
-and each edit asserts a single match of its anchor, so a version this was not written
-against fails here rather than halfway through a run.
+chains rather than a registry, and its guide for adding an environment says to edit them
+in place, so this copies two modules in and edits four call sites. Each edit asserts a
+single match of its anchor, and re-running is a no-op, so a version this was not written
+against fails here rather than halfway through a run. That version is the commit
+``rl/rlinf`` is pinned to.
 
-The version is the commit ``rl/rlinf`` is pinned to, which git records and checks. The run
-config is not copied either: hydra reads it from this repo, and its ``searchpath`` picks up
-RLinf's own config tree.
+The run config is not copied: hydra reads it from this repo, and its ``searchpath`` picks
+up RLinf's own config tree.
 """
 
 from __future__ import annotations

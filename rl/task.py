@@ -4,7 +4,7 @@ rollout reads off it.
 Copied to ``rlinf/envs/maniskill/tasks/so101_block_stack.py``, where RLinf imports every
 module at startup, so the arm has to be importable from there: either install this
 repository's ``sim`` package into the environment, or point ``VLA_TEST_DIR`` at this
-repository and let the import below find it.
+repository.
 """
 
 import os

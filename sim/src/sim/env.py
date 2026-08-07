@@ -111,7 +111,7 @@ class SO101BlockStack(BaseEnv):
         # Shadows are the depth cue in the wrist view.
         kwargs.setdefault("enable_shadow", True)
         # Screened spawns to draw resets from instead of sampling fresh ones. Read before
-        # the base class reconfigures, which is what reaches _initialize_episode.
+        # the base class reconfigures, since that reaches _initialize_episode.
         self._pool = read_layouts(layouts) if layouts else None
         super().__init__(*args, robot_uids=robot_uids, **kwargs)
 

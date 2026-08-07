@@ -8,9 +8,9 @@ use_full_state: False
 auto_reset: False
 ignore_terminations: False
 
-# Score the task and nothing else. RLinf differences the level it is handed, and a
-# stack that falls takes the level back down, so an episode's rewards sum to 1 if the
-# block is still seated at the end and 0 if it is not.
+# Score the task and nothing else. RLinf differences the level it is handed, and a fallen
+# stack takes it back down, so an episode's rewards sum to 1 if the block is seated at the
+# end and 0 if it is not.
 use_rel_reward: True
 reward_mode: only_success
 
@@ -31,8 +31,8 @@ enable_offload: False
 init_params:
   id: SO101BlockStack-v1
   num_envs: null
-  # Screened spawns to draw resets from. Unset, the env samples fresh ones and about 6%
-  # of them are layouts the oracle cannot stack.
+  # Screened spawns to draw resets from. Unset, the env samples fresh ones, about 6% of
+  # which the oracle cannot stack.
   layouts: ${oc.env:RL_LAYOUTS,null}
   obs_mode: rgb
   # Absolute joint targets, which is what the policy emits.
