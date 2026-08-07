@@ -3,7 +3,8 @@
     uv run python sim/scripts/eval.py CHECKPOINT/pretrained_model
 
 Chunks are stitched with Real-Time Chunking: each one is guided onto the tail of the
-chunk it replaces.
+chunk it replaces. ``--no-rtc`` denoises each chunk on its own instead, which is how the
+RL rollout executes them.
 """
 
 from __future__ import annotations
@@ -28,13 +29,13 @@ from sim.env import BLOCK_NAMES
 CAMERAS = ("wrist", "top")
 
 
-def load_policy(checkpoint, metadata, horizon, device):
+def load_policy(checkpoint, metadata, horizon, device, rtc=True):
     """The checkpoint's policy and the processors saved beside it, which carry the
     camera renaming and the normalization stats from training."""
     config = PreTrainedConfig.from_pretrained(checkpoint)
     config.pretrained_path = checkpoint
     config.device = device
-    config.rtc_config = RTCConfig(execution_horizon=horizon)
+    config.rtc_config = RTCConfig(execution_horizon=horizon, enabled=rtc)
 
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=config,
@@ -116,6 +117,7 @@ def main():
                         default=Path("/data/datasets/so101_block_stack_sim"))
     parser.add_argument("--repo-id", default="vla-test/so101_block_stack_sim")
     parser.add_argument("--horizon", type=int, default=20, help="steps executed per chunk")
+    parser.add_argument("--no-rtc", action="store_true", help="denoise each chunk on its own")
     parser.add_argument("--envs", type=int, default=16, help="envs stepped in lockstep")
     parser.add_argument("--episodes", type=int, help="default: every held-out layout")
     parser.add_argument("--video", type=Path, help="write an mp4 per batch of layouts")
@@ -132,7 +134,7 @@ def main():
     steps = gym.spec("SO101BlockStack-v1").max_episode_steps
     policy, preprocessor, postprocessor = load_policy(
         args.checkpoint, LeRobotDatasetMetadata(args.repo_id, root=args.dataset),
-        args.horizon, env.device.type)
+        args.horizon, env.device.type, rtc=not args.no_rtc)
 
     results = []
     for start in range(0, len(layouts), env.num_envs):

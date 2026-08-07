@@ -6,7 +6,9 @@ total_num_envs: null
 wrap_obs_mode: so101
 use_full_state: False
 auto_reset: False
-ignore_terminations: False
+# Run every episode to the step limit rather than ending it the step the block is seated,
+# so a stack the arm then knocks over takes its point back.
+ignore_terminations: True
 
 # Score the task and nothing else. RLinf differences the level it is handed, and a fallen
 # stack takes it back down, so an episode's rewards sum to 1 if the block is seated at the
