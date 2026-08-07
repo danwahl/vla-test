@@ -77,16 +77,16 @@ uv run python rl/convert.py \
     /data/checkpoints/pi05_so101_block_stack_sim/openpi
 ```
 
-RLinf is `rl/rlinf`, a submodule pinned to the commit this was written against. The run happens in its `rlinf/rlinf:agentic-rlinf0.4-maniskill_libero` image, which carries a venv per embodiment; the openpi one already has ManiSkill, openpi and a CUDA torch, so only this repository's own packages go in. `rl/patch.py` copies two modules into the submodule and edits four call sites.
+RLinf is `rl/rlinf`, a submodule pinned to the commit this was written against. The run happens in its `rlinf/rlinf:agentic-rlinf0.4-maniskill_libero` image, which carries a venv per embodiment; the openpi one has ManiSkill, openpi, a CUDA torch and the packages RLinf imports, so RLinf itself and this repository's `sim` go on `PYTHONPATH` rather than being installed. `rl/patch.py` copies two modules into the submodule and edits four call sites.
 
 ```bash
 source /opt/venv/openpi/bin/activate
 git submodule update --init
-uv pip install --no-deps -e sim
 python rl/patch.py
 
 export VLA_TEST_DIR=$PWD
 export EMBODIED_PATH=$PWD/rl/rlinf/examples/embodiment
+export PYTHONPATH=$PWD/rl/rlinf:$PWD/sim/src
 export SFT_CKPT=/data/checkpoints/pi05_so101_block_stack_sim/openpi
 export RL_LAYOUTS=$PWD/rl_layouts.jsonl
 
