@@ -77,14 +77,15 @@ uv run python rl/convert.py \
     /data/checkpoints/pi05_so101_block_stack_sim/openpi
 ```
 
-RLinf is not vendored. It dispatches environments, observations, actions and control modes through if-else chains rather than a registry, and its own guide for adding an environment says to edit them in place, so `rl/patch.py` does that against a checkout:
+RLinf is not vendored. It dispatches environments, observations, actions and control modes through if-else chains rather than a registry, and its own guide for adding an environment says to edit them in place, so `rl/patch.py` does that. It holds the repository and the pinned commit, and fetches that commit alone:
 
 ```bash
-git clone https://github.com/RLinf/RLinf && git -C RLinf checkout d3aff54
-uv run python rl/patch.py RLinf
+uv run python rl/patch.py RLinf --clone
 ```
 
-It copies `rl/task.py` and `rl/dataconfig.py` in, and takes a case for this arm in four places, 22 lines in all: `rlinf/config.py` resolves the robot to `pd_joint_pos`, `rlinf/envs/action_utils.py` passes joint-space actions through unchanged as it already does for the panda arms, `rlinf/envs/maniskill/maniskill_env.py` gains the observation branch the env config names, and `So101BlockStackDataConfig` joins the registry in `.../dataconfig/__init__.py` as `pi05_so101_block_stack`, whose prefix is where the actor reads pi0.5's language-token budget. Each edit asserts a single match of its anchor, so a checkout that has moved on fails there rather than halfway through a run, and re-running is a no-op.
+It copies `rl/task.py` and `rl/dataconfig.py` in, and takes a case for this arm in four places, 22 lines in all: `rlinf/config.py` resolves the robot to `pd_joint_pos`, `rlinf/envs/action_utils.py` passes joint-space actions through unchanged as it already does for the panda arms, `rlinf/envs/maniskill/maniskill_env.py` gains the observation branch the env config names, and `So101BlockStackDataConfig` joins the registry in `.../dataconfig/__init__.py` as `pi05_so101_block_stack`, whose prefix is where the actor reads pi0.5's language-token budget. Each edit asserts a single match of its anchor, and the checkout is asserted to be on the pin, so a version this was not written against fails there rather than halfway through a run. Re-running is a no-op.
+
+Everything the run needs beyond RLinf itself is in the `rlinf/rlinf:agentic-rlinf0.4-maniskill_libero` image, under `/opt/venv/openpi`: RLinf's `embodied` extra carries neither ManiSkill nor openpi nor a CUDA torch, so there is no dependency set to resolve here.
 
 The run config stays here. Hydra reads it from `rl/`, and the `searchpath` in it picks up RLinf's own config tree for the pieces this one builds on:
 
