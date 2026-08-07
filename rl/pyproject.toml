@@ -1,0 +1,18 @@
+[project]
+name = "vla-test-rl"
+version = "0.1.0"
+description = "PPO on the SO-101 block stack, in RLinf."
+requires-python = ">=3.12,<3.13"
+# What the scripts here need to run against a checkpoint. RLinf and the stack it rolls out
+# on are not declared: they come from the image the run happens in, and RLinf itself is
+# `rl/rlinf`, pinned as a submodule because its entrypoints and the configs this one
+# extends are excluded from its package.
+dependencies = [
+    "safetensors>=0.4",
+    "torch==2.11.0",
+]
+
+# Nothing here is imported as a package. `task.py` and `dataconfig.py` are copied into the
+# RLinf checkout by `patch.py`, and the rest are scripts.
+[tool.uv]
+package = false

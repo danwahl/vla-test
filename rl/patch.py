@@ -1,34 +1,25 @@
-"""Teach an RLinf checkout about this arm.
+"""Teach the RLinf submodule about this arm.
 
-    uv run python rl/patch.py RLINF_DIR --clone
+    uv run python rl/patch.py
 
 RLinf dispatches environments, observations, actions and control modes through if-else
 chains rather than a registry, and its own guide for adding an environment says to edit
 them in place. So this copies two modules in and edits four call sites. It is idempotent,
-and each edit asserts a single match of its anchor, so a checkout that has moved on fails
-here rather than halfway through a run.
+and each edit asserts a single match of its anchor, so a version this was not written
+against fails here rather than halfway through a run.
 
-``COMMIT`` is the pin. It is checked against the checkout, so this is the one place the
-version is written down and no run can quietly use another. RLinf's dependencies are not
-declared here: its ``embodied`` extra carries neither ManiSkill nor openpi nor a CUDA
-torch, which come from the image the run happens in, so an installable that resolved would
-not be an environment that runs.
-
-The run config is not copied: hydra reads it from this repo, and its ``searchpath`` picks
-up RLinf's own config tree. See the README for the invocation.
+The version is the commit ``rl/rlinf`` is pinned to, which git records and checks. The run
+config is not copied either: hydra reads it from this repo, and its ``searchpath`` picks up
+RLinf's own config tree.
 """
 
 from __future__ import annotations
 
 import argparse
 import shutil
-import subprocess
 from pathlib import Path
 
 HERE = Path(__file__).parent
-
-REPOSITORY = "https://github.com/RLinf/RLinf"
-COMMIT = "d3aff547c06d66e2e792a62a71122abed86e8aee"
 
 # Modules with no call site to share, which are simply imported by name once the edits
 # below reference them.
@@ -92,35 +83,14 @@ EDITS = [
 ]
 
 
-def clone(target):
-    """Fetch the pinned commit alone, which is a fraction of the history."""
-    subprocess.run(["git", "init", "-q", str(target)], check=True)
-    subprocess.run(["git", "-C", str(target), "fetch", "-q", "--depth", "1",
-                    REPOSITORY, COMMIT], check=True)
-    subprocess.run(["git", "-C", str(target), "checkout", "-q", "FETCH_HEAD"], check=True)
-
-
-def head(target):
-    return subprocess.run(["git", "-C", str(target), "rev-parse", "HEAD"],
-                          capture_output=True, text=True, check=True).stdout.strip()
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("rlinf", type=Path, help="an RLinf checkout")
-    parser.add_argument("--clone", action="store_true",
-                        help="fetch the pinned commit into RLINF_DIR first")
-    parser.add_argument("--any-commit", action="store_true",
-                        help="patch a checkout that is not on the pin")
+    parser.add_argument("rlinf", type=Path, nargs="?", default=HERE / "rlinf",
+                        help="an RLinf checkout (default: the submodule)")
     args = parser.parse_args()
 
-    if args.clone:
-        clone(args.rlinf)
-    at = head(args.rlinf)
-    if at != COMMIT and not args.any_commit:
-        raise SystemExit(f"{args.rlinf} is at {at[:12]}, not the pinned {COMMIT[:12]}. "
-                         "Pass --any-commit to patch it anyway.")
-    print(f"rlinf    {at[:12]}")
+    if not (args.rlinf / "rlinf").is_dir():
+        raise SystemExit(f"{args.rlinf} is empty. Run: git submodule update --init")
 
     for source, destination in FILES.items():
         target = args.rlinf / destination

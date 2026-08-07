@@ -2,7 +2,9 @@
 rollout reads off it.
 
 Copied to ``rlinf/envs/maniskill/tasks/so101_block_stack.py``, where RLinf imports every
-module at startup. Point ``VLA_TEST_DIR`` at this repository.
+module at startup, so the arm has to be importable from there: either install this
+repository's ``sim`` package into the environment, or point ``VLA_TEST_DIR`` at this
+repository and let the import below find it.
 """
 
 import os
@@ -11,13 +13,10 @@ from pathlib import Path
 
 import torch
 
-# RLinf sweeps this package on import, so a checkout that only runs other embodiments
-# carries on without the arm.
-package = Path(os.environ.get("VLA_TEST_DIR", Path.home() / "vla-test")) / "sim" / "src"
-if package.is_dir():
-    if str(package) not in sys.path:
-        sys.path.insert(0, str(package))
-    import sim  # noqa: F401  registers SO101BlockStack-v1 and the arm
+if "VLA_TEST_DIR" in os.environ:
+    sys.path.insert(0, str(Path(os.environ["VLA_TEST_DIR"]) / "sim" / "src"))
+
+import sim  # noqa: F401  registers SO101BlockStack-v1 and the arm
 
 
 def wrap_obs(raw_obs, env):

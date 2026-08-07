@@ -1,0 +1,7 @@
+[submodule "rl/rlinf"]
+	path = rl/rlinf
+	url = https://github.com/RLinf/RLinf.git
+	# The commit this repository records is the pin; `rl/patch.py` edits the working tree
+	# in place, so only a move of that commit is worth reporting.
+	shallow = true
+	ignore = dirty

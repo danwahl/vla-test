@@ -77,30 +77,26 @@ uv run python rl/convert.py \
     /data/checkpoints/pi05_so101_block_stack_sim/openpi
 ```
 
-RLinf is not vendored. It dispatches environments, observations, actions and control modes through if-else chains rather than a registry, and its own guide for adding an environment says to edit them in place, so `rl/patch.py` does that. It holds the repository and the pinned commit, and fetches that commit alone:
+RLinf is `rl/rlinf`, a submodule pinned to the commit this was written against. The run happens in its `rlinf/rlinf:agentic-rlinf0.4-maniskill_libero` image, which carries a venv per embodiment; the openpi one already has ManiSkill, openpi and a CUDA torch, so only this repository's own packages go in. `rl/patch.py` then copies two modules into the submodule and edits four call sites, because RLinf dispatches environments, observations, actions and control modes through if-else chains rather than a registry, and its own guide for adding an environment says to edit them in place. It says which four and why.
 
 ```bash
-uv run python rl/patch.py RLinf --clone
-```
+source /opt/venv/openpi/bin/activate
+git submodule update --init
+uv pip install --no-deps -e sim
+python rl/patch.py
 
-It copies `rl/task.py` and `rl/dataconfig.py` in, and takes a case for this arm in four places, 22 lines in all: `rlinf/config.py` resolves the robot to `pd_joint_pos`, `rlinf/envs/action_utils.py` passes joint-space actions through unchanged as it already does for the panda arms, `rlinf/envs/maniskill/maniskill_env.py` gains the observation branch the env config names, and `So101BlockStackDataConfig` joins the registry in `.../dataconfig/__init__.py` as `pi05_so101_block_stack`, whose prefix is where the actor reads pi0.5's language-token budget. Each edit asserts a single match of its anchor, and the checkout is asserted to be on the pin, so a version this was not written against fails there rather than halfway through a run. Re-running is a no-op.
-
-Everything the run needs beyond RLinf itself is in the `rlinf/rlinf:agentic-rlinf0.4-maniskill_libero` image, under `/opt/venv/openpi`: RLinf's `embodied` extra carries neither ManiSkill nor openpi nor a CUDA torch, so there is no dependency set to resolve here.
-
-The run config stays here. Hydra reads it from `rl/`, and the `searchpath` in it picks up RLinf's own config tree for the pieces this one builds on:
-
-```bash
-export VLA_TEST_DIR=/path/to/vla-test
+export VLA_TEST_DIR=$PWD
+export EMBODIED_PATH=$PWD/rl/rlinf/examples/embodiment
 export SFT_CKPT=/data/checkpoints/pi05_so101_block_stack_sim/openpi
-export RL_LAYOUTS=$VLA_TEST_DIR/rl_layouts.jsonl
-export EMBODIED_PATH=$PWD/examples/embodiment
+export RL_LAYOUTS=$PWD/rl_layouts.jsonl
 
-# score the warm start
-python evaluations/eval_embodied_agent.py \
+# score the warm start, then PPO from it
+python rl/rlinf/evaluations/eval_embodied_agent.py \
     --config-path $VLA_TEST_DIR/rl --config-name pi05_so101_ppo
-# PPO from it
 python $EMBODIED_PATH/train_embodied_agent.py \
     --config-path $VLA_TEST_DIR/rl --config-name pi05_so101_ppo
 ```
+
+The run config stays here: hydra reads it from `rl/`, and the `searchpath` in it picks up RLinf's own config tree for the pieces this one builds on.
 
 The actor and the rollout are held on one card, each offloaded while the other runs. Scoring builds the env and the rollout and no actor, and reads the model from `rollout.model`, which mirrors the actor's. Both draw from `RL_LAYOUTS`, so the score is the number the climb is read against; `sim/scripts/eval.py` replays a different screened set, held out from the training demonstrations.
