@@ -21,9 +21,7 @@ cluster:
 runner:
   task_type: embodied
   logger:
-    # Checkpoints and metrics land under here, so point it at storage that outlives the
-    # machine the run happens on.
-    log_path: ${oc.env:RL_RESULTS}
+    log_path: "../results"
     project_name: vla-test
     experiment_name: pi05_so101_block_stack_ppo
     logger_backends: ["tensorboard", "wandb"]

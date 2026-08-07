@@ -89,7 +89,6 @@ export VLA_TEST_DIR=$PWD
 export EMBODIED_PATH=$PWD/rl/rlinf/examples/embodiment
 export SFT_CKPT=/data/checkpoints/pi05_so101_block_stack_sim/openpi
 export RL_LAYOUTS=$PWD/rl_layouts.jsonl
-export RL_RESULTS=/data/results
 
 # score the warm start, then PPO from it
 python rl/rlinf/evaluations/eval_embodied_agent.py \
