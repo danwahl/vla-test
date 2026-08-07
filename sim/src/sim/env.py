@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import ClassVar
 
 import numpy as np
@@ -43,6 +45,8 @@ BLOCK_COLOURS = {
     "blue": (0.10, 0.20, 0.85, 1.0),
 }
 BLOCK_NAMES = tuple(BLOCK_COLOURS)
+# The ordered pairs of distinct blocks the task can name.
+PAIRS = [(held, target) for held in range(3) for target in range(3) if held != target]
 # Spawn box, inside the arm's top-down reach at both grasp and stack height. The
 # separation clears a block rotated onto its 42 mm diagonal.
 SPAWN_X = (0.17, 0.25)
@@ -53,7 +57,8 @@ SPAWN_SEPARATION = 0.07
 SPAWN_YAW = np.pi / 2
 
 # Success gates. A lift clears the table; a stack is seated within a block half-width,
-# one block-height up, with neither of the other two blocks shoved out of place.
+# one block-height up, out of the jaws, with neither of the other two blocks shoved out of
+# place.
 LIFT_DZ = 0.05
 STACK_XY_TOL = 0.018
 STACK_Z_TOL = 0.012
@@ -69,6 +74,38 @@ HOLD_BONUS = 0.01
 TASK_PROMPT = "stack the {held} block on the {target} block"
 
 
+def prompt(held, target):
+    return TASK_PROMPT.format(held=BLOCK_NAMES[held], target=BLOCK_NAMES[target])
+
+
+def write_layouts(path, layouts, key):
+    """One line per layout, giving the spawn a run can be replayed from."""
+    with Path(path).open("w") as out:
+        for i, item in enumerate(layouts):
+            positions = [[float(x), float(y), BLOCK_REST_Z] for x, y in item["xy"]]
+            out.write(json.dumps({
+                key: i,
+                "held": int(item["held"]),
+                "target": int(item["target"]),
+                "prompt": prompt(int(item["held"]), int(item["target"])),
+                "positions": positions,
+                "yaws": [float(yaw) for yaw in item["yaw"]],
+                "max_yaw": SPAWN_YAW,
+            }) + "\n")
+
+
+def read_layouts(path):
+    """Those lines back, in the form ``reset`` takes a layout."""
+    with Path(path).open() as file:
+        rows = [json.loads(line) for line in file]
+    return {
+        "xy": np.array([[p[:2] for p in row["positions"]] for row in rows], np.float32),
+        "yaw": np.array([row["yaws"] for row in rows], np.float32),
+        "held": np.array([row["held"] for row in rows]),
+        "target": np.array([row["target"] for row in rows]),
+    }
+
+
 # Half again the oracle's cycle, and well past where a fine-tuned policy settles.
 @register_env("SO101BlockStack-v1", max_episode_steps=200)
 class SO101BlockStack(BaseEnv):
@@ -77,9 +114,12 @@ class SO101BlockStack(BaseEnv):
     # compute_dense_reward is implemented.
     SUPPORTED_REWARD_MODES: ClassVar[tuple[str, ...]] = ("none",)
 
-    def __init__(self, *args, robot_uids="so101", **kwargs):
+    def __init__(self, *args, robot_uids="so101", layouts=None, **kwargs):
         # Shadows are the depth cue in the wrist view.
         kwargs.setdefault("enable_shadow", True)
+        # Screened spawns to draw resets from instead of sampling fresh ones. Read before
+        # the base class reconfigures, which is what reaches _initialize_episode.
+        self._pool = read_layouts(layouts) if layouts else None
         super().__init__(*args, robot_uids=robot_uids, **kwargs)
 
     @property
@@ -152,6 +192,7 @@ class SO101BlockStack(BaseEnv):
             self.milestones = {name: torch.zeros(self.num_envs, dtype=torch.bool)
                                for name in MILESTONE_WEIGHTS}
             self.hold_steps = torch.zeros(self.num_envs)
+            self.scored = torch.full((self.num_envs,), -1, dtype=torch.int32)
 
     def _initialize_episode(self, env_idx, options):
         with torch.device(self.device):
@@ -163,6 +204,8 @@ class SO101BlockStack(BaseEnv):
             # replayed and a batch can be made to cover the pairs evenly. One value is
             # shared by the whole batch; a batch of them is taken one per env.
             layout = (options or {}).get("layout") or {}
+            if self._pool is not None:
+                layout = self._draw(b) | layout
 
             def given(key, dtype, *shape):
                 return torch.as_tensor(layout[key], dtype=dtype,
@@ -195,6 +238,12 @@ class SO101BlockStack(BaseEnv):
             for reached in self.milestones.values():
                 reached[env_idx] = False
             self.hold_steps[env_idx] = 0.0
+            self.scored[env_idx] = -1
+
+    def _draw(self, b):
+        """``b`` layouts taken at random from the pool. A given layout overrides them."""
+        rows = torch.randint(len(self._pool["held"]), (b,), device="cpu").numpy()
+        return {key: value[rows] for key, value in self._pool.items()}
 
     def _sample_layout(self, b):
         """Three block spawns, resampled until none of them overlap."""
@@ -226,14 +275,15 @@ class SO101BlockStack(BaseEnv):
 
     def prompts(self):
         """What each env in the batch was asked to do."""
-        return [TASK_PROMPT.format(held=BLOCK_NAMES[held], target=BLOCK_NAMES[target])
-                for held, target in zip(self.held.tolist(), self.target.tolist(), strict=True)]
+        return [prompt(held, target) for held, target
+                in zip(self.held.tolist(), self.target.tolist(), strict=True)]
 
     def evaluate(self):
-        """The two gates -- was the commanded block lifted, and is it seated on its
-        target -- alongside the milestone reward banked on the way.
+        """The two gates -- was the commanded block lifted, and is it stacked on its
+        target -- alongside the reward its milestones have earned.
 
-        Seating is geometry alone, so it reads true while the jaws are still closed.
+        A stack is seated and out of the jaws, so reaching stacking height while still
+        holding the block earns the carry and nothing more.
         """
         pos = self._block_positions()
         rows = torch.arange(self.num_envs, device=self.device)
@@ -244,7 +294,7 @@ class SO101BlockStack(BaseEnv):
         moved[rows, self.held] = 0.0
         stack_xy = torch.linalg.norm((held - target)[:, :2], dim=-1)
         stack_z = held[:, 2] - target[:, 2]
-        stacked = (
+        seated = (
             (stack_xy < STACK_XY_TOL)
             & ((stack_z - BLOCK_SIDE).abs() < STACK_Z_TOL)
             & (moved < DISTURB_TOL).all(-1)
@@ -253,18 +303,24 @@ class SO101BlockStack(BaseEnv):
         grasping = torch.stack(
             [self.agent.is_grasping(self.blocks[name]) for name in BLOCK_NAMES], dim=1
         )[rows, self.held]
+        stacked = seated & ~grasping
 
+        # ManiSkill scores a step once, but nothing stops another reader calling this
+        # again, so the gates bank on the first call for each step and reading cannot
+        # advance the reward.
+        fresh = self._elapsed_steps != self.scored
+        self.scored = self._elapsed_steps.clone()
         for name, reached in [("grasped", grasping), ("lifted", lifted),
                               ("carried", lifted & (stack_xy < CARRY_XY_TOL)),
                               ("stacked", stacked)]:
-            self.milestones[name] |= reached
-        self.hold_steps += stacked.float()
+            self.milestones[name] |= reached & fresh
+        self.hold_steps += (stacked & fresh).float()
 
         reward = HOLD_BONUS * self.hold_steps
         for name, weight in MILESTONE_WEIGHTS.items():
             reward = reward + weight * self.milestones[name]
 
-        return {"success": stacked, "reward": reward,
+        return {"success": stacked, "reward": reward, "seated": seated,
                 "lifted": self.milestones["lifted"].clone(),
                 "grasped": self.milestones["grasped"].clone(),
                 "stack_xy": stack_xy, "stack_z": stack_z}

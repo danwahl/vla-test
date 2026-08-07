@@ -59,7 +59,15 @@ uv run python sim/scripts/eval.py \
 
 ## Reinforcement learning
 
-The fine-tuned checkpoint is the warm start for PPO in [RLinf](https://github.com/RLinf/RLinf), which drives the same env in parallel and scores the milestones the arm passes on the way to a stack: a grasp, a lift, the block carried over its target, and the stack itself. Each is banked once reached, so the reward only rises and a step-to-step difference is never negative. A small bonus accrues for every step the stack stands, which is what pays for letting go of it.
+The fine-tuned checkpoint is the warm start for PPO in [RLinf](https://github.com/RLinf/RLinf), which drives the same env in parallel and scores four milestones: a grasp, a lift, the block carried over its target, and the stack itself, which counts once the block is seated and out of the jaws. Each is banked once reached, so the reward only rises and a step-to-step difference is non-negative. A small bonus accrues for every step the stack stands.
+
+`sim/scripts/rl_layouts.py` screens a pool of spawns the oracle stacks, cycling the colour pairs so all six are covered evenly:
+
+```bash
+uv run python sim/scripts/rl_layouts.py rl_layouts.jsonl --count 5000
+```
+
+The env takes `layouts=PATH` and draws each reset from the file, which keeps the spawns the oracle cannot stack out of the reward and fixes the population an eval is read against. A layout passed to `reset` still overrides the draw.
 
 `rl/convert.py` rewrites a merged checkpoint into the layout RLinf's openpi actor loads:
 

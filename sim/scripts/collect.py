@@ -13,7 +13,6 @@ Screening and recording alternate until every colour pair has its quota.
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 
 import gymnasium as gym
@@ -24,11 +23,10 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
 import sim  # noqa: F401  (registers the env)
 from sim.agent import JOINT_NAMES
-from sim.env import BLOCK_NAMES, BLOCK_REST_Z, IMAGE_SIZE, SPAWN_YAW, TASK_PROMPT
+from sim.env import IMAGE_SIZE, PAIRS, prompt, write_layouts
 from sim.oracle import Oracle
 
 CAMERAS = ("wrist", "top")
-PAIRS = [(held, target) for held in range(3) for target in range(3) if held != target]
 
 FEATURES = {
     "observation.state": {"dtype": "float32", "shape": (len(JOINT_NAMES),),
@@ -39,10 +37,6 @@ FEATURES = {
                                         "names": ["height", "width", "channel"]}
        for camera in CAMERAS},
 }
-
-
-def prompt(held, target):
-    return TASK_PROMPT.format(held=BLOCK_NAMES[held], target=BLOCK_NAMES[target])
 
 
 def screen(env, need, seed):
@@ -122,22 +116,6 @@ def record(env, layouts, dataset, quota):
         print(f"record {len(written)} episodes, {len(commands)} frames each, "
               f"{sum(quota.values())} still owed", flush=True)
     return written
-
-
-def write_layouts(path, layouts, key):
-    """One line per layout, giving the spawn a run can be replayed from."""
-    with path.open("w") as out:
-        for i, item in enumerate(layouts):
-            positions = [[float(x), float(y), BLOCK_REST_Z] for x, y in item["xy"]]
-            out.write(json.dumps({
-                key: i,
-                "held": int(item["held"]),
-                "target": int(item["target"]),
-                "prompt": prompt(int(item["held"]), int(item["target"])),
-                "positions": positions,
-                "yaws": [float(yaw) for yaw in item["yaw"]],
-                "max_yaw": SPAWN_YAW,
-            }) + "\n")
 
 
 def main():
