@@ -2,9 +2,6 @@
 # same torch and lerobot that `sim` evaluates it with.
 [tool.uv.workspace]
 members = ["sim", "train", "rl"]
-# RLinf is a submodule, not ours to resolve. Left in, uv adopts it as a workspace project
-# and its override-dependencies start governing this lockfile.
-exclude = ["rl/rlinf", "rl/rlinf/**"]
 
 [dependency-groups]
 dev = [
@@ -20,8 +17,6 @@ testpaths = ["sim/tests"]
 line-length = 100
 # Where the first-party package lives, for import sorting.
 src = ["sim/src"]
-# The submodule carries its own ruff settings, which ruff picks up walking into it.
-extend-exclude = ["rl/rlinf"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "C4", "RUF"]

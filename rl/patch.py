@@ -1,16 +1,12 @@
-"""Teach the RLinf submodule about this arm.
+"""Teach an RLinf checkout about this arm.
 
-    uv run python rl/patch.py
+    python rl/patch.py $RLINF_DIR
 
 RLinf dispatches environments, observations, actions and control modes through if-else
-chains rather than a registry, and its guide for adding an environment says to edit them
-in place, so this copies two modules in and edits four call sites. Each edit asserts a
-single match of its anchor, and re-running is a no-op, so a version this was not written
-against fails here rather than halfway through a run. That version is the commit
-``rl/rlinf`` is pinned to.
-
-The run config is not copied: hydra reads it from this repo, and its ``searchpath`` picks
-up RLinf's own config tree.
+chains, and its guide for adding an environment says to edit them in place, so this copies
+modules in and edits those chains. Each edit asserts a single match of its anchor, and
+re-running is a no-op, so a version this was not written against fails here, before a run
+starts. That version is ``RLINF_COMMIT`` in ``rl/Dockerfile``.
 """
 
 from __future__ import annotations
@@ -85,12 +81,11 @@ EDITS = [
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("rlinf", type=Path, nargs="?", default=HERE / "rlinf",
-                        help="an RLinf checkout (default: the submodule)")
+    parser.add_argument("rlinf", type=Path, help="an RLinf checkout")
     args = parser.parse_args()
 
     if not (args.rlinf / "rlinf").is_dir():
-        raise SystemExit(f"{args.rlinf} is empty. Run: git submodule update --init")
+        raise SystemExit(f"{args.rlinf} holds no RLinf checkout")
 
     for source, destination in FILES.items():
         target = args.rlinf / destination

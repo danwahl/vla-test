@@ -3,14 +3,14 @@ name = "vla-test-rl"
 version = "0.1.0"
 description = "PPO on the SO-101 block stack, in RLinf."
 requires-python = ">=3.12,<3.13"
-# What the scripts here need. RLinf is the `rl/rlinf` submodule, and the stack it rolls
-# out on comes from the image the run happens in, so neither is declared.
+# What the scripts here need. RLinf and the stack it rolls out on both come from the image
+# the run happens in.
 dependencies = [
     "safetensors>=0.4",
     "torch==2.11.0",
 ]
 
 # Nothing here is imported as a package: `patch.py` copies `task.py` and `dataconfig.py`
-# into the submodule, and the rest are scripts.
+# into the RLinf checkout, and the rest are scripts.
 [tool.uv]
 package = false

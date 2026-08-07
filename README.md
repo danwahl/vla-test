@@ -55,7 +55,7 @@ uv run python sim/scripts/eval.py \
     /data/checkpoints/pi05_so101_block_stack_sim/checkpoints/last/pretrained_model
 ```
 
-`--video DIR` records each batch.
+`--video DIR` records each batch, and `--no-rtc` denoises each chunk on its own.
 
 ## Reinforcement learning
 
@@ -77,21 +77,28 @@ uv run python rl/convert.py \
     /data/checkpoints/pi05_so101_block_stack_sim/openpi
 ```
 
-RLinf is `rl/rlinf`, a submodule pinned to the commit this was written against. The run happens in its `rlinf/rlinf:agentic-rlinf0.4-maniskill_libero` image, which carries a venv per embodiment; the openpi one has ManiSkill, openpi, a CUDA torch and the packages RLinf imports, so RLinf itself and this repository's `sim` go on `PYTHONPATH` rather than being installed. `rl/patch.py` copies two modules into the submodule and edits four call sites.
+`rl/Dockerfile` builds the environment a run happens in on top of RLinf's `rlinf/rlinf:agentic-rlinf0.4-maniskill_libero` image, which has a venv per embodiment: the openpi one includes ManiSkill, openpi, a CUDA torch and the packages RLinf imports. The build adds sshd and a clone of [RLinf](https://github.com/RLinf/RLinf) at `RLINF_COMMIT`, and installs `rl/profile.sh` to `/etc/profile.d`, so a login shell on the machine has the paths a run reads.
 
 ```bash
-source /opt/venv/openpi/bin/activate
-git submodule update --init
-python rl/patch.py
+docker build -f rl/Dockerfile -t danwahl/vla-test-rl .
+docker push danwahl/vla-test-rl
+```
 
-export VLA_TEST_DIR=$PWD
-export EMBODIED_PATH=$PWD/rl/rlinf/examples/embodiment
-export PYTHONPATH=$PWD/rl/rlinf:$PWD/sim/src
-export SFT_CKPT=/data/checkpoints/pi05_so101_block_stack_sim/openpi
-export RL_LAYOUTS=$PWD/rl_layouts.jsonl
+The image contains the base RLinf code, and the repository is copied onto a machine running it, so a config change needs only an rsync. `rl/patch.py` adds the arm to that clone:
+
+```bash
+rsync -a --exclude .venv --exclude .git . root@HOST:$VLA_TEST_DIR/
+python $VLA_TEST_DIR/rl/patch.py $RLINF_DIR
+```
+
+Then, with `WANDB_API_KEY` and `HF_TOKEN` in the environment:
+
+```bash
+hf download drwahl/pi05_so101_block_stack_sim --include 'openpi/*' \
+    --local-dir /data/checkpoints/pi05_so101_block_stack_sim
 
 # score the warm start, then PPO from it
-python rl/rlinf/evaluations/eval_embodied_agent.py \
+python $RLINF_DIR/evaluations/eval_embodied_agent.py \
     --config-path $VLA_TEST_DIR/rl --config-name pi05_so101_ppo
 python $EMBODIED_PATH/train_embodied_agent.py \
     --config-path $VLA_TEST_DIR/rl --config-name pi05_so101_ppo

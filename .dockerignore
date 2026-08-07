@@ -1,0 +1,6 @@
+# The image is pushed to a public registry, so secrets stay out of the build context.
+.env
+
+.git
+.venv
+**/__pycache__
