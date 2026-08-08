@@ -21,7 +21,8 @@ cluster:
 runner:
   task_type: embodied
   logger:
-    log_path: "../results"
+    # Absolute, so where the run was started from does not move the checkpoints.
+    log_path: /root/results
     project_name: vla-test
     experiment_name: pi05_so101_block_stack_grpo
     logger_backends: ["tensorboard", "wandb"]
