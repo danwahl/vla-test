@@ -3,7 +3,7 @@ import numpy as np
 import torch
 
 import sim  # noqa: F401  (registers the env)
-from sim.env import IMAGE_SIZE, read_layouts, write_layouts
+from sim.env import HOLD_REWARD, IMAGE_SIZE, read_layouts, write_layouts
 from sim.oracle import Oracle
 
 
@@ -52,6 +52,58 @@ def test_resets_are_drawn_from_a_screened_pool(tmp_path):
         assert pool["target"][row] == int(drawn["target"][i])
         assert np.allclose(pool["yaw"][row], drawn["yaw"][i].cpu().numpy(), atol=1e-6)
     env.close()
+
+
+def test_a_group_of_envs_can_be_given_one_layout(tmp_path):
+    """What GRPO rests on: RLinf hands a group of envs one pool row by index."""
+    env = gym.make("SO101BlockStack-v1", num_envs=8).unwrapped
+    env.reset(seed=0)
+    written = tmp_path / "pool.jsonl"
+    write_layouts(written, [{key: value[i].cpu().numpy() for key, value in env.layout().items()}
+                            for i in range(env.num_envs)], "index")
+    env.close()
+
+    env = gym.make("SO101BlockStack-v1", num_envs=8, layouts=written).unwrapped
+    assert env.total_num_trials == 8
+    env.reset(options={"episode_id": torch.tensor([2] * 4 + [5] * 4)})
+    # Each env places its own copy, so a group agrees to float precision, not exactly.
+    xy = env.layout()["xy"]
+    assert (xy[:4] - xy[0]).abs().max() < 1e-6
+    assert (xy[4:] - xy[4]).abs().max() < 1e-6
+    assert (xy[0] - xy[4]).abs().max() > 1e-3
+    env.close()
+
+    env = gym.make("SO101BlockStack-v1", num_envs=8, layouts=written, sample=False).unwrapped
+    env.reset()
+    first = env.layout()["xy"].clone()
+    env.reset()
+    assert (first - env.layout()["xy"]).abs().max() < 1e-6
+    env.close()
+
+
+def test_the_reward_level_only_rises():
+    """RL differences this level, so a fall must cost nothing rather than a point."""
+    env = gym.make("SO101BlockStack-v1", num_envs=4).unwrapped
+    env.reset(seed=0, options={"layout": {"held": [0] * 4, "target": [1] * 4}})
+
+    levels, wins = [], []
+
+    def watch(_obs):
+        info = env.evaluate()
+        # A second reader in the same step must not advance the count.
+        assert torch.equal(info["reward"], env.evaluate()["reward"])
+        levels.append(info["reward"].clone())
+        wins.append(info["success"].clone())
+
+    Oracle(env).run(env.held, env.target, on_step=watch)
+    env.close()
+
+    level, won = torch.stack(levels), torch.stack(wins).float()
+    assert won.any(0).any(), "the oracle stacked none of them"
+    assert (level.diff(dim=0) >= 0).all()
+    # A point once seated, kept where the arm knocked it over, and a step's worth per step
+    # it stood.
+    assert torch.allclose(level[-1], won.amax(0) + HOLD_REWARD * won.sum(0))
 
 
 def test_oracle_stacks_a_block_inside_the_episode_limit():

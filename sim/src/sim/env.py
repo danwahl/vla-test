@@ -64,6 +64,10 @@ STACK_XY_TOL = 0.018
 STACK_Z_TOL = 0.012
 DISTURB_TOL = 0.015
 
+# What a step of holding the stack is worth, against a point for first seating it. Set so
+# that holding it for the rest of the episode is worth about as much as seating it.
+HOLD_REWARD = 0.005
+
 TASK_PROMPT = "stack the {held} block on the {target} block"
 
 
@@ -186,7 +190,9 @@ class SO101BlockStack(BaseEnv):
             self.target = torch.zeros(self.num_envs, dtype=torch.long)
             self.spawns = torch.zeros(self.num_envs, 3, 3)
             self.milestones = {name: torch.zeros(self.num_envs, dtype=torch.bool)
-                               for name in ("grasped", "lifted")}
+                               for name in ("grasped", "lifted", "stacked")}
+            self.held_steps = torch.zeros(self.num_envs)
+            self.counted = torch.full((self.num_envs,), -1)
 
     def _initialize_episode(self, env_idx, options):
         with torch.device(self.device):
@@ -200,7 +206,7 @@ class SO101BlockStack(BaseEnv):
             options = options or {}
             layout = options.get("layout") or {}
             if self._pool is not None:
-                layout = self._draw(env_idx) | layout
+                layout = self._draw(env_idx, options) | layout
 
             def given(key, dtype, *shape):
                 return torch.as_tensor(layout[key], dtype=dtype,
@@ -232,12 +238,24 @@ class SO101BlockStack(BaseEnv):
             )
             for reached in self.milestones.values():
                 reached[env_idx] = False
+            self.held_steps[env_idx] = 0.0
+            self.counted[env_idx] = -1
 
-    def _draw(self, env_idx):
-        """A layout from the pool per env resetting. A given layout overrides them."""
-        n = len(self._pool["held"])
-        rows = (torch.randint(n, (len(env_idx),)) if self._sample else env_idx)
-        rows = rows.cpu().numpy() % n
+    @property
+    def total_num_trials(self):
+        """Layouts a reset can name by index. Without a pool the spawns are sampled fresh
+        and an index goes unread."""
+        return len(self._pool["held"]) if self._pool is not None else 1
+
+    def _draw(self, env_idx, options):
+        """A layout from the pool per env resetting. ``episode_id`` names them by index,
+        which is how a group of envs is given the same one. A given layout overrides them.
+        """
+        rows = options.get("episode_id")
+        if rows is None:
+            rows = (torch.randint(self.total_num_trials, (len(env_idx),))
+                    if self._sample else env_idx)
+        rows = rows.cpu().numpy() % self.total_num_trials
         return {key: value[rows] for key, value in self._pool.items()}
 
     def _sample_layout(self, b):
@@ -300,10 +318,17 @@ class SO101BlockStack(BaseEnv):
         )[rows, self.held]
         stacked = seated & ~grasping
 
-        for name, reached in [("grasped", grasping), ("lifted", lifted)]:
+        for name, reached in [("grasped", grasping), ("lifted", lifted),
+                              ("stacked", stacked)]:
             self.milestones[name] |= reached
+        # This is read more than once in a step, so the count moves on the clock.
+        self.held_steps += stacked & (self.elapsed_steps != self.counted)
+        self.counted = self.elapsed_steps.clone()
 
         return {"success": stacked, "seated": seated,
+                # A level that only rises, so differencing it never scores below zero: a
+                # point for seating the stack, and a step's worth for every step it stands.
+                "reward": self.milestones["stacked"] + HOLD_REWARD * self.held_steps,
                 "lifted": self.milestones["lifted"].clone(),
                 "grasped": self.milestones["grasped"].clone(),
                 "stack_xy": stack_xy, "stack_z": stack_z}

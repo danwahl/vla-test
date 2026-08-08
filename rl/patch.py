@@ -52,6 +52,14 @@ EDITS = [
         "\n"
         "            return so101_block_stack.wrap_obs(raw_obs, self.env.unwrapped)\n",
     ),
+    # A level the task computes, which RLinf differences into the step reward.
+    (
+        "rlinf/envs/maniskill/maniskill_env.py",
+        '        elif getattr(self.cfg, "reward_mode", "default") == "only_success":\n',
+        '        elif getattr(self.cfg, "reward_mode", "default") == "task":\n'
+        '            reward = info["reward"]\n'
+        '        elif getattr(self.cfg, "reward_mode", "default") == "only_success":\n',
+    ),
     # The openpi transforms, under the name actor.model.openpi.config_name gives.
     (
         "rlinf/models/embodiment/openpi/dataconfig/__init__.py",

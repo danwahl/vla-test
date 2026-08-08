@@ -107,6 +107,13 @@ python $EMBODIED_PATH/train_embodied_agent.py \
 
 The run config stays here; its `searchpath` picks up RLinf's own config tree for the pieces it builds on.
 
+`rl/pi05_so101_grpo.yaml` runs the same warm start without a critic. A group of rollouts shares a spawn and is scored against its own mean, so layout difficulty cancels rather than having to be learned, and the reward is the level `evaluate()` returns: a point for seating the stack, and a step's worth for every step it stands. That level only rises, so no step scores below zero.
+
+```bash
+python $EMBODIED_PATH/train_embodied_agent.py \
+    --config-path $VLA_TEST_DIR/rl --config-name pi05_so101_grpo
+```
+
 `rl/to_lerobot.py` takes a checkpoint back the other way, into a directory `sim/scripts/eval.py` and the rest of lerobot read:
 
 ```bash

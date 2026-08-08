@@ -1,0 +1,179 @@
+defaults:
+  - env/so101_block_stack@env.train
+  - env/so101_block_stack@env.eval
+  - model/pi0_5@actor.model
+  - hybrid_engines/fsdp@actor.fsdp_config
+  - weight_syncer/patch_syncer@weight_syncer
+  - override hydra/job_logging: stdout
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+    - file://${oc.env:EMBODIED_PATH}/config/
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: all
+
+runner:
+  task_type: embodied
+  logger:
+    log_path: "../results"
+    project_name: vla-test
+    experiment_name: pi05_so101_block_stack_grpo
+    logger_backends: ["tensorboard", "wandb"]
+
+  max_epochs: 1000
+  max_steps: -1
+  only_eval: False
+  val_check_interval: 5
+  save_interval: 10
+
+  resume_dir: null
+  ckpt_path: null
+
+algorithm:
+  normalize_advantages: True
+  kl_penalty: kl
+  # How many rollouts share a spawn. Their mean return is the baseline each is scored
+  # against, so layout difficulty cancels and no value function has to learn it.
+  group_size: 8
+  reward_coef: 1.0
+
+  reward_type: chunk_level
+  logprob_type: chunk_level
+  entropy_type: chunk_level
+  update_epoch: 5
+
+  adv_type: grpo
+  loss_type: actor
+  loss_agg_func: "token-mean"
+
+  kl_beta: 0.0
+  entropy_bonus: 0.005
+  clip_ratio_high: 0.2
+  clip_ratio_low: 0.2
+  clip_ratio_c: 3.0
+  value_clip: 0.2
+  huber_delta: 10.0
+
+  gamma: 0.99
+  gae_lambda: 0.95
+
+  # The loss mask a GRPO advantage is shaped by comes from this filter, so it stays on:
+  # the other producer only runs where terminations are not ignored. The lower bound drops
+  # groups that stacked nothing, whose advantages are zero either way. A group that all
+  # stacked still differs in how long each held it, so the upper bound sits past any
+  # reachable return rather than trimming those the way a binary reward would.
+  filter_rewards: True
+  rewards_lower_bound: 0.1
+  rewards_upper_bound: 10.0
+  # Read by the rollout worker's setup, which expects both blocks present.
+  sampling_params:
+    do_sample: True
+    temperature_train: 1.0
+    temperature_eval: 0.6
+    top_k: 50
+    top_p: 1.0
+    repetition_penalty: 1.0
+    add_BOS: False
+  length_params:
+    max_new_token: null
+    max_length: 1024
+    min_length: 1
+
+env:
+  group_name: "EnvGroup"
+
+  train:
+    rollout_epoch: 4
+    total_num_envs: 64
+    auto_reset: True
+    group_size: ${algorithm.group_size}
+    # Reset by layout index, which is how a group is handed one spawn. RLinf redraws the
+    # indices after every rollout.
+    use_fixed_reset_state_ids: True
+    # The level in `sim/src/sim/env.py`: a point for seating the stack and a step's worth
+    # for every step it stands. It only rises, so no step is scored below zero.
+    reward_mode: task
+  eval:
+    rollout_epoch: 1
+    total_num_envs: 64
+    auto_reset: True
+    # A layout per env, so a check covers as many of them as it runs episodes.
+    group_size: 1
+    is_eval: True
+    # The layouts held out of training, scored as `sim/scripts/eval.py` scores them: the
+    # first `total_num_envs` of them, the same ones at every check.
+    init_params:
+      layouts: ${oc.env:EVAL_LAYOUTS,null}
+      sample: False
+    video_cfg:
+      save_video: False
+      video_base_dir: ${runner.logger.log_path}/video/eval
+
+rollout:
+  group_name: "RolloutGroup"
+  generation_backend: "huggingface"
+  recompute_logprobs: False
+  enable_offload: True
+  pipeline_stage_num: 1
+
+  # Read in place of actor.model when runner.only_eval is set, by the validator, the env
+  # worker and the rollout worker alike, so it carries the whole actor config.
+  model: ${actor.model}
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 32
+  # One gradient step's samples: an episode per env per rollout epoch, each cut into
+  # chunks of `num_action_chunks`.
+  global_batch_size: 2560
+  seed: 0
+  enable_offload: True
+
+  model:
+    model_path: ${oc.env:SFT_CKPT}
+    model_type: "openpi"
+    add_value_head: False
+    # Steps executed per inference, matching the horizon the eval replans on.
+    num_action_chunks: 20
+    action_dim: 6
+    num_steps: 4
+    openpi:
+      config_name: "pi05_so101_block_stack"
+      num_images_in_input: 2
+      noise_method: "flow_noise"
+      action_horizon: 50
+      # Exploration band. The joint-space commands this arm takes are amplified by the
+      # links they drive, so grasps survive a much narrower band than the end-effector
+      # deltas the default is drawn for.
+      noise_logvar_range: [0.015, 0.03]
+      joint_logprob: True
+    policy_setup: "so101"
+
+  optim:
+    lr: 7.91e-6
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-08
+    clip_grad: 1.0
+
+  fsdp_config:
+    strategy: "fsdp"
+    sharding_strategy: "no_shard"
+    gradient_checkpointing: False
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}
+
+reward:
+  use_reward_model: False
+
+critic:
+  use_critic_model: False
