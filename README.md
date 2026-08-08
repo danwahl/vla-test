@@ -69,10 +69,10 @@ uv run python sim/scripts/rl_layouts.py rl_layouts.jsonl --count 5000
 
 The env takes `layouts=PATH` and draws each reset from the file, which keeps the spawns the oracle cannot stack out of the reward and fixes the population an eval is read against.
 
-`rl/convert.py` rewrites a merged checkpoint into the layout RLinf's openpi actor loads:
+`rl/to_openpi.py` rewrites a merged checkpoint into the layout RLinf's openpi actor loads:
 
 ```bash
-uv run python rl/convert.py \
+uv run python rl/to_openpi.py \
     /data/checkpoints/pi05_so101_block_stack_sim/merged \
     /data/checkpoints/pi05_so101_block_stack_sim/openpi
 ```
@@ -105,3 +105,12 @@ python $EMBODIED_PATH/train_embodied_agent.py \
 ```
 
 The run config stays here; its `searchpath` picks up RLinf's own config tree for the pieces it builds on.
+
+`rl/to_lerobot.py` takes a checkpoint back the other way, into a directory `sim/scripts/eval.py` and the rest of lerobot read:
+
+```bash
+uv run python rl/to_lerobot.py \
+    RESULTS/checkpoints/global_step_60/actor/model_state_dict/full_weights.pt \
+    /data/checkpoints/pi05_so101_block_stack_sim/merged \
+    /data/checkpoints/pi05_so101_block_stack_rl/global_step_60
+```

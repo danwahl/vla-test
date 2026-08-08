@@ -1,6 +1,6 @@
 """Rewrite a merged checkpoint into the layout RLinf's openpi actor loads.
 
-    uv run python rl/convert.py MERGED OUT
+    uv run python rl/to_openpi.py MERGED OUT
 
 Both sides are the same PyTorch pi0.5, so the weights carry over tensor for tensor and
 only the names change. The normalization stats travel as the JSON openpi reads.
