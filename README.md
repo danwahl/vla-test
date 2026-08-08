@@ -67,7 +67,7 @@ The fine-tuned checkpoint is the warm start for PPO in [RLinf](https://github.co
 uv run python sim/scripts/rl_layouts.py rl_layouts.jsonl --count 5000
 ```
 
-The env takes `layouts=PATH` and draws each reset from the file, which keeps the spawns the oracle cannot stack out of the reward and fixes the population an eval is read against.
+The env takes `layouts=PATH` and draws each reset from the file, which keeps the spawns the oracle cannot stack out of the reward. Training draws from the pool at random; the periodic eval takes `sample=False` and the dataset's held-out layouts, so every check scores the same episodes as `sim/scripts/eval.py`.
 
 `rl/to_openpi.py` rewrites a merged checkpoint into the layout RLinf's openpi actor loads:
 
@@ -77,7 +77,7 @@ uv run python rl/to_openpi.py \
     /data/checkpoints/pi05_so101_block_stack_sim/openpi
 ```
 
-`rl/Dockerfile` builds the environment a run happens in on top of RLinf's `rlinf/rlinf:agentic-rlinf0.4-maniskill_libero` image, which has a venv per embodiment: the openpi one includes ManiSkill, openpi, a CUDA torch and the packages RLinf imports. The build adds sshd and a clone of [RLinf](https://github.com/RLinf/RLinf) at `RLINF_COMMIT`, and installs `rl/profile.sh` to `/etc/profile.d`, so a login shell on the machine has the paths a run reads.
+`rl/Dockerfile` builds the environment a run happens in on top of RLinf's `rlinf/rlinf:agentic-rlinf0.4-maniskill_libero` image, which has a venv per embodiment: the openpi one includes ManiSkill, openpi, a CUDA torch and the packages RLinf imports. The build adds sshd, a clone of [RLinf](https://github.com/RLinf/RLinf) at `RLINF_COMMIT`, and a profile script that selects the venv and sources `rl/profile.sh` from the copied repository, so a login shell on the machine has the paths a run reads.
 
 ```bash
 docker build -f rl/Dockerfile -t danwahl/vla-test-rl .
@@ -87,6 +87,7 @@ docker push danwahl/vla-test-rl
 The image contains the base RLinf code, and the repository is copied onto a machine running it, so a config change needs only an rsync. `rl/patch.py` adds the arm to that clone:
 
 ```bash
+cp /data/datasets/so101_block_stack_sim/meta/eval_layouts.jsonl .
 rsync -a --exclude .venv --exclude .git . root@HOST:$VLA_TEST_DIR/
 python $VLA_TEST_DIR/rl/patch.py $RLINF_DIR
 ```

@@ -91,6 +91,11 @@ env:
     auto_reset: True
     group_size: ${algorithm.group_size}
     is_eval: True
+    # The layouts held out of training, scored as `sim/scripts/eval.py` scores them: the
+    # first `total_num_envs` of them, the same ones at every check.
+    init_params:
+      layouts: ${oc.env:EVAL_LAYOUTS,null}
+      sample: False
     video_cfg:
       save_video: False
       video_base_dir: ${runner.logger.log_path}/video/eval
@@ -110,7 +115,8 @@ actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
   micro_batch_size: 32
-  # One rollout epoch's samples: 32 envs x 200/20 chunks per episode.
+  # One gradient step's samples: an episode per env, cut into chunks of
+  # `num_action_chunks`.
   global_batch_size: 320
   seed: 0
   enable_offload: True

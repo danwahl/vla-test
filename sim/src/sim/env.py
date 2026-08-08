@@ -107,12 +107,15 @@ class SO101BlockStack(BaseEnv):
     # compute_dense_reward is implemented.
     SUPPORTED_REWARD_MODES: ClassVar[tuple[str, ...]] = ("none",)
 
-    def __init__(self, *args, robot_uids="so101", layouts=None, **kwargs):
+    def __init__(self, *args, robot_uids="so101", layouts=None, sample=True, **kwargs):
         # Shadows are the depth cue in the wrist view.
         kwargs.setdefault("enable_shadow", True)
         # Screened spawns to draw resets from instead of sampling fresh ones. Read before
         # the base class reconfigures, since that reaches _initialize_episode.
         self._pool = read_layouts(layouts) if layouts else None
+        # Unset, env i takes layout i from the pool at every reset, so two runs are scored
+        # on the same episodes.
+        self._sample = sample
         super().__init__(*args, robot_uids=robot_uids, **kwargs)
 
     @property
@@ -194,9 +197,10 @@ class SO101BlockStack(BaseEnv):
             # Spawns and colour pair can each be given instead of sampled, so a run can be
             # replayed and a batch can be made to cover the pairs evenly. One value is
             # shared by the whole batch; a batch of them is taken one per env.
-            layout = (options or {}).get("layout") or {}
+            options = options or {}
+            layout = options.get("layout") or {}
             if self._pool is not None:
-                layout = self._draw(b) | layout
+                layout = self._draw(env_idx) | layout
 
             def given(key, dtype, *shape):
                 return torch.as_tensor(layout[key], dtype=dtype,
@@ -229,9 +233,11 @@ class SO101BlockStack(BaseEnv):
             for reached in self.milestones.values():
                 reached[env_idx] = False
 
-    def _draw(self, b):
-        """``b`` layouts taken at random from the pool. A given layout overrides them."""
-        rows = torch.randint(len(self._pool["held"]), (b,), device="cpu").numpy()
+    def _draw(self, env_idx):
+        """A layout from the pool per env resetting. A given layout overrides them."""
+        n = len(self._pool["held"])
+        rows = (torch.randint(n, (len(env_idx),)) if self._sample else env_idx)
+        rows = rows.cpu().numpy() % n
         return {key: value[rows] for key, value in self._pool.items()}
 
     def _sample_layout(self, b):

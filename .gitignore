@@ -16,6 +16,7 @@ data/
 checkpoints/
 *.mp4
 rl_layouts.jsonl
+eval_layouts.jsonl
 
 # Secrets
 .env

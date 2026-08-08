@@ -121,6 +121,9 @@ def main():
     parser.add_argument("--envs", type=int, default=16, help="envs stepped in lockstep")
     parser.add_argument("--episodes", type=int, help="default: every held-out layout")
     parser.add_argument("--video", type=Path, help="write an mp4 per batch of layouts")
+    # Two policies see the same layouts in the same order, so their outcomes pair up by
+    # index and a comparison between them can be read per layout.
+    parser.add_argument("--out", type=Path, help="write each layout's outcome")
     # The layouts are fixed, but the policy draws fresh noise for every chunk it denoises.
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
@@ -152,6 +155,8 @@ def main():
               f"{sum(r['stacked'] for r in results)} stacked", flush=True)
     env.close()
 
+    if args.out:
+        args.out.write_text("".join(json.dumps(row) + "\n" for row in results))
     report(results)
 
 

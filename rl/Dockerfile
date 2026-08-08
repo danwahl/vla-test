@@ -23,8 +23,14 @@ RUN git clone --filter=blob:none https://github.com/RLinf/RLinf.git /opt/rlinf \
     && rm -rf /opt/rlinf/.git
 
 # An ssh session starts with an empty environment, so the settings a run reads are in a
-# profile script, and commands run in a login shell.
-COPY rl/profile.sh /etc/profile.d/vla-test.sh
+# profile script, and commands run in a login shell. Only what the image itself fixes is
+# baked; the rest comes from the copied repository, and so travels with an rsync.
+RUN printf '%s\n' \
+        'source /opt/venv/openpi/bin/activate' \
+        'export RLINF_DIR=/opt/rlinf' \
+        'export VLA_TEST_DIR=/root/vla-test' \
+        'if [ -f "$VLA_TEST_DIR/rl/profile.sh" ]; then . "$VLA_TEST_DIR/rl/profile.sh"; fi' \
+        > /etc/profile.d/vla-test.sh
 # A login shell reads /root/.bashrc after /etc/profile.d, and the image activates its
 # openvla venv there, so the openpi one is selected again at the end.
 RUN echo 'source /etc/profile.d/vla-test.sh' >> /root/.bashrc
