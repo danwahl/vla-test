@@ -47,7 +47,7 @@ algorithm:
   reward_type: chunk_level
   logprob_type: chunk_level
   entropy_type: chunk_level
-  update_epoch: 5
+  update_epoch: 1
 
   adv_type: grpo
   loss_type: actor
@@ -55,7 +55,9 @@ algorithm:
 
   kl_beta: 0.0
   entropy_bonus: 0
-  clip_ratio_high: 0.2
+  # The upper bound is the looser of the two, so a chunk's probability has more room to
+  # rise than to collapse.
+  clip_ratio_high: 0.28
   clip_ratio_low: 0.2
   clip_ratio_c: 3.0
   value_clip: 0.2
@@ -132,9 +134,9 @@ actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
   micro_batch_size: 32
-  # One gradient step's samples: an episode per env per rollout epoch, each cut into
-  # chunks of `num_action_chunks`.
-  global_batch_size: 640
+  # One gradient step's samples. A rollout is an episode per env per rollout epoch, each
+  # cut into chunks of `num_action_chunks`, so this divides it into five minibatches.
+  global_batch_size: 128
   seed: 0
   enable_offload: True
 
