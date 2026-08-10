@@ -162,6 +162,21 @@ def test_advancing_does_not_rewrite_what_was_already_handed_out():
     assert handed.abs().max() == 0
 
 
+def test_the_tail_survives_a_write_to_the_chunk_it_came_from():
+    """The buffer holds the tail until the update reads it, a rollout later. Anything
+    downstream of the sampler that writes its output in place would otherwise change what
+    the update is told the rollout was guided toward."""
+    tail = rtc.Tail(CHUNK, EXECUTED, DIM)
+    tail_inputs(tail)
+    chunk = torch.randn(4, CHUNK, DIM)
+    tail.advance(chunk)
+    carried = tail_inputs(tail)["rtc_prev"].clone()
+
+    chunk.mul_(3.0)
+
+    torch.testing.assert_close(tail_inputs(tail)["rtc_prev"], carried)
+
+
 def test_a_new_rollout_epoch_starts_without_the_last_one_s_tail():
     tail = rtc.Tail(CHUNK, EXECUTED, DIM)
     tail_inputs(tail)

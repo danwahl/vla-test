@@ -114,7 +114,9 @@ class Tail:
         return {"rtc_prev": self.prev, "rtc_valid": self.valid}
 
     def advance(self, model_actions):
+        # A copy, since the buffer holds this until the update reads it a rollout later and
+        # the sampler's caller owns the chunk it is a slice of.
         chunk = model_actions.detach().to(self.dtype)
-        self.prev = chunk[:, self.executed:]
+        self.prev = chunk[:, self.executed:].clone()
         self.valid = torch.ones(
             chunk.shape[0], device=chunk.device, dtype=chunk.dtype)
