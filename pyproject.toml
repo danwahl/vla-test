@@ -11,7 +11,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["sim/tests"]
+testpaths = ["sim/tests", "rl/tests"]
 
 [tool.ruff]
 line-length = 100

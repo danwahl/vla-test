@@ -144,6 +144,9 @@ actor:
     model_path: ${oc.env:SFT_CKPT}
     model_type: "openpi"
     add_value_head: False
+    # Each chunk is denoised toward the tail of the one it replaces, so the arm does not
+    # jump where one hands over to the next and the rollout executes what the eval executes.
+    rtc: True
     # Steps executed per inference, matching the horizon the eval replans on.
     num_action_chunks: 20
     action_dim: 6
