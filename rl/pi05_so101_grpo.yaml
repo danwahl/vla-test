@@ -100,6 +100,11 @@ env:
     # Reset by layout index, which is how a group is handed one spawn. RLinf redraws the
     # indices at the end of every rollout epoch, so each one draws its own.
     use_fixed_reset_state_ids: True
+    # The pool those indices name. A group shares an index, so it shares a spawn and a
+    # colour pair, and the group's mean return is a baseline for one layout rather than a
+    # mean over eight different ones. Disjoint from the layouts the eval scores.
+    init_params:
+      layouts: ${oc.env:RL_LAYOUTS}
     # The level in `sim/src/sim/env.py`: a point for seating the stack and a step's worth
     # for every step it stands. It only rises, so no step is scored below zero.
     reward_mode: task

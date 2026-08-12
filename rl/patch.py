@@ -19,6 +19,7 @@ HERE = Path(__file__).parent
 
 ROLLOUT = "rlinf/workers/rollout/hf/huggingface_worker.py"
 ENV = "rlinf/workers/env/env_worker.py"
+ACTOR = "rlinf/workers/actor/fsdp_actor_worker.py"
 
 # Modules with no call site to share, which are simply imported by name once the edits
 # below reference them.
@@ -505,6 +506,49 @@ EDITS = [
         '                obs_dicts, [batch.get("dones") for batch in obs_batches]\n'
         "            ),\n"
         "        }\n",
+    ),
+    # `actor.recompute_prev_logprobs` evaluates the rollout's own chains through the actor's
+    # weights before the first optimizer step, so the ratio the loss divides by starts at
+    # exactly 1. The densities the rollout worker stores come from a second copy of these
+    # weights in a second process, where a bf16 matmul reduces in a different order, and the
+    # Gaussian exponent divides by a sigma near 0.02, so a small difference in the predicted
+    # mean is a large one in the density. It is also one-signed: the action was drawn around
+    # the rollout's mean, so the cross term averages away and the squared offset does not,
+    # which is why `actor/ratio` reads 0.82 where symmetric noise would put it at or above 1.
+    #
+    # `torch.chunk` slices contiguously and the update splits the same shuffled batch the
+    # same way, so chunk i here is the micro batch the update reads i-th. RLinf recomputes
+    # for GR00T through that model's forward, and for the LLM actor in `run_inference`.
+    (
+        ACTOR,
+        "        with torch.no_grad():\n"
+        "            self.rollout_batch = process_nested_dict_for_train(\n"
+        "                self.rollout_batch, shuffle_id\n"
+        "            )\n",
+        "        with torch.no_grad():\n"
+        "            self.rollout_batch = process_nested_dict_for_train(\n"
+        "                self.rollout_batch, shuffle_id\n"
+        "            )\n"
+        "\n"
+        '        if self.cfg.actor.get("recompute_prev_logprobs", False):\n'
+        "            recomputed = []\n"
+        "            with torch.no_grad():\n"
+        "                for batch in split_dict_to_chunk(\n"
+        "                    self.rollout_batch,\n"
+        '                    self.rollout_batch["prev_logprobs"].size(0)\n'
+        "                    // self.cfg.actor.micro_batch_size,\n"
+        "                ):\n"
+        "                    batch = put_tensor_device(batch, self.device)\n"
+        "                    with self.amp_context:\n"
+        "                        output_dict = self.model(\n"
+        '                            forward_inputs=batch.get("forward_inputs", None),\n'
+        "                            compute_logprobs=True,\n"
+        "                            compute_entropy=self.cfg.algorithm.entropy_bonus > 0,\n"
+        '                            compute_values=self.cfg.algorithm.adv_type == "gae",\n'
+        "                            use_cache=False,\n"
+        "                        )\n"
+        '                    recomputed.append(output_dict["logprobs"].detach().cpu())\n'
+        '            self.rollout_batch["prev_logprobs"] = torch.cat(recomputed)\n',
     ),
 ]
 
