@@ -28,10 +28,10 @@ runner:
     logger_backends: ["tensorboard", "wandb"]
 
   max_epochs: 1000
-  max_steps: -1
+  max_steps: 120
   only_eval: False
   val_check_interval: 10
-  save_interval: 10
+  save_interval: 20
 
   resume_dir: null
   ckpt_path: null
@@ -92,7 +92,9 @@ env:
   group_name: "EnvGroup"
 
   train:
-    rollout_epoch: 1
+    # Rollouts collected per update. The indices are redrawn per epoch, so four of them put
+    # 32 layouts behind an iteration rather than 8.
+    rollout_epoch: 4
     total_num_envs: 64
     # An explicit reset per rollout epoch, which follows the redraw below.
     auto_reset: False
@@ -141,7 +143,7 @@ actor:
   micro_batch_size: 32
   # One gradient step's samples. A rollout is an episode per env per rollout epoch, each
   # cut into chunks of `num_action_chunks`, so this divides it into five minibatches.
-  global_batch_size: 128
+  global_batch_size: 512
   seed: 0
   enable_offload: True
 
