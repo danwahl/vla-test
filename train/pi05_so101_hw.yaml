@@ -1,0 +1,51 @@
+# pi0.5 fine-tuned on the hardware demonstrations, continuing from the checkpoint the sim
+# demonstrations produced. Stock lerobot-train runs this file as it stands:
+#
+#   uv run lerobot-train --config_path=train/pi05_so101_hw.yaml \
+#                        --output_dir=... --job_name=...
+
+policy:
+  # The sim run's merged weights, so this starts from a policy that already stacks rather
+  # than from pi05_base. `path` takes a local directory the same way it takes a hub id.
+  path: /data/checkpoints/pi05_so101_block_stack_sim/merged
+  # Everything left out of this block is inherited from the checkpoint's own config, and
+  # `train/merge.py` merges on the CPU, so the device it saved is the one training reads.
+  device: cuda
+  push_to_hub: false
+  dtype: bfloat16
+  gradient_checkpointing: true
+  scheduler_decay_steps: 5000
+
+dataset:
+  repo_id: vla-test/so101_block_stack_hw
+  # Where hw/oracle_replay.py wrote it.
+  root: /data/datasets/so101_block_stack_hw
+
+# A fresh adapter over the merged weights, at the surface the sim run used.
+peft:
+  method_type: LORA
+  r: 32
+  lora_alpha: 64
+  target_modules: '.*\.paligemma\.model\.language_model\.layers\.\d+\.(self_attn\.[qkvo]_proj|mlp\.(gate|up|down)_proj)'
+  full_training_modules:
+    - gemma_expert.model
+    - action_in_proj
+    - action_out_proj
+    - time_mlp_in
+    - time_mlp_out
+
+rename_map:
+  observation.images.top: observation.images.base_0_rgb
+  observation.images.wrist: observation.images.left_wrist_0_rgb
+
+# The hardware set is small enough that this is eleven passes over it. Saving every fifth
+# of the run leaves the choice of how far to take it to a measurement on the arm, which is
+# the only place the answer shows.
+steps: 5000
+batch_size: 4
+save_freq: 1000
+
+wandb:
+  enable: true
+  project: vla-test
+  disable_artifact: true
