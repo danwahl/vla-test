@@ -33,6 +33,12 @@ AXIS_Y = -0.000177          # the roll axis' lateral offset from the pan axis
 
 TILT_DOWN = math.pi / 2     # tool straight down
 
+# Where the tool sits at ``HOME_QPOS``. Teleoperation integrates its target from here,
+# since the arm is homed before it starts. Measured from FK and pinned by the same test.
+HOME_TCP = (0.344782, 0.050497, 0.945451)
+HOME_TILT = 0.779190
+HOME_JAW_YAW = 1.613366
+
 
 def ik(tcp, jaw_yaw, tilt=TILT_DOWN):
     """Arm joint angles placing the TCP at world ``tcp`` with the tool at ``tilt``.
