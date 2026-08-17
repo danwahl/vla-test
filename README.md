@@ -122,3 +122,48 @@ uv run python rl/to_lerobot.py \
     /data/checkpoints/pi05_so101_block_stack_sim/merged \
     /data/checkpoints/pi05_so101_block_stack_rl/global_step_60
 ```
+
+## Hardware
+
+`hw/` runs the same task on the physical arm through [LeRobot](https://github.com/huggingface/lerobot)'s `SO101Follower`. `hw/robot.py` holds the processor steps that make the arm look like the simulator: degrees to radians, `<joint>.pos` to the sim's bare joint names, and each lens undistorted and reprojected onto `K_SIM` as a 480x480 frame. Episodes are written with `sim/src/sim/dataset.py`, the schema `sim/scripts/collect.py` writes, so hardware and sim episodes are interchangeable.
+
+`uv sync --package vla-test-hw` installs this without the trainer. `hw/robot.py` holds the rig's serial port and the USB port each camera sits in, and `hw/calibration/` each lens' charuco intrinsic.
+
+The table is read from the sim rather than perceived. A layout is planned there, `hw/overlay.py` blends that layout's camera view with the live one, and the blocks are moved onto their sim positions:
+
+```bash
+uv run python -m hw.overlay --index 0
+```
+
+`hw/oracle_replay.py` does that and then sends the oracle's joint commands open loop, recording the arm's own states and frames against them:
+
+```bash
+uv run python -m hw.oracle_replay OUT --indices 0 1 2
+```
+
+Both take `--layouts`, which defaults to the spawns the sim demonstrations were collected on, so a policy trained on either set is still scored against layouts it has not seen.
+
+`hw/teleop.py` drives the arm with a 3DConnexion SpaceMouse instead. The cap translates the tool, tilts it and turns the jaw; its two buttons work the gripper. The target is integrated from the home pose and solved by `sim/src/sim/kinematics.py`, the same closed form the oracle plans with, so teleoperated and scripted episodes occupy one joint-space distribution.
+
+```bash
+uv run python -m hw.teleop --held red --target green --out OUT
+```
+
+Without `--out` it teleoperates and records nothing.
+
+`train/pi05_so101_hw.yaml` fine-tunes on what these record, as a fresh adapter over the merged sim weights:
+
+```bash
+uv run lerobot-train --config_path=train/pi05_so101_hw.yaml \
+                     --output_dir=/data/checkpoints/pi05_so101_block_stack_hw \
+                     --job_name=pi05_so101_block_stack_hw \
+                     --wandb.run_id=pi05_so101_block_stack_hw
+```
+
+`hw/rollout.py` is the evaluation, with the arm where the simulator was. The blocks go anywhere on the table, the console's button starts the episode, and whether it stacked is the operator's call:
+
+```bash
+uv run python -m hw.rollout CHECKPOINT --held red --target blue
+```
+
+Chunks are stitched the way `sim/scripts/eval.py` stitches them. Denoising the next one takes long enough to see, so the arm runs on the chunk it already has while that happens, and RTC is told how many steps that will take so the two join.

@@ -10,7 +10,7 @@ dist/
 .pytest_cache/
 .ruff_cache/
 
-# Outputs — datasets, checkpoints and rollouts live outside the repo
+# Outputs. Datasets, checkpoints and rollouts live outside the repo.
 outputs/
 data/
 checkpoints/
