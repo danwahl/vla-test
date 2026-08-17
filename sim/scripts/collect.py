@@ -18,25 +18,11 @@ from pathlib import Path
 import gymnasium as gym
 import numpy as np
 import torch
-from lerobot.configs.video import RGBEncoderConfig
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
 import sim  # noqa: F401  (registers the env)
-from sim.agent import JOINT_NAMES
-from sim.env import IMAGE_SIZE, PAIRS, prompt, write_layouts
+from sim.dataset import CAMERAS, create
+from sim.env import PAIRS, prompt, write_layouts
 from sim.oracle import Oracle
-
-CAMERAS = ("wrist", "top")
-
-FEATURES = {
-    "observation.state": {"dtype": "float32", "shape": (len(JOINT_NAMES),),
-                          "names": JOINT_NAMES},
-    "action": {"dtype": "float32", "shape": (len(JOINT_NAMES),), "names": JOINT_NAMES},
-    **{f"observation.images.{camera}": {"dtype": "video",
-                                        "shape": (IMAGE_SIZE, IMAGE_SIZE, 3),
-                                        "names": ["height", "width", "channel"]}
-       for camera in CAMERAS},
-}
 
 
 def screen(env, need, seed):
@@ -131,11 +117,7 @@ def main():
     torch.manual_seed(args.seed)
     state_env = gym.make("SO101BlockStack-v1", num_envs=args.envs).unwrapped
     fps = round(1 / state_env.control_timestep)
-    dataset = LeRobotDataset.create(repo_id=args.repo_id, fps=fps, features=FEATURES,
-                                    root=args.out, robot_type="so101",
-                                    # H.264 rather than the AV1 default: every loader
-                                    # downstream of here decodes it.
-                                    rgb_encoder=RGBEncoderConfig(vcodec="h264"))
+    dataset = create(args.out, args.repo_id, fps)
     render_env = gym.make("SO101BlockStack-v1", num_envs=args.envs, obs_mode="rgb").unwrapped
 
     quota = dict.fromkeys(PAIRS, args.per_pair)
