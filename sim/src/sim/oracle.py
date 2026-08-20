@@ -1,10 +1,12 @@
 """Scripted pick-and-stack expert, planned in closed form and run across all envs at once.
 
 A cycle is a handful of keyposes solved by :mod:`kinematics` and joined in joint space by
-splines that cross each one without stopping on it, so the arm comes to rest only where
-the jaws work against a still arm. Planning in joint space fixes the solution branch for a
-whole move. Every env runs the same phases with its own joint targets, which keeps the
-batch in lockstep for rendering.
+splines that cross each one without stopping on it, so the arm comes to rest only at the
+stand-off it looks from and where the jaws work against a still arm. Planning in joint
+space fixes the solution branch for a whole move. Every env runs the same phases with its
+own joint targets, which keeps the batch in lockstep for rendering.
+
+A cycle starts wherever the arm is, which `retract` is there to vary.
 """
 
 from __future__ import annotations
@@ -14,12 +16,13 @@ import math
 import torch
 
 from .agent import GRIPPER_CLOSED, GRIPPER_OPEN, HOME_QPOS
-from .env import BLOCK_SIDE
+from .env import BLOCK_REST_Z, BLOCK_SIDE, SPAWN_X, SPAWN_Y
 from .kinematics import ik, ik_clearance, ik_straight_up
 
 GRASP_DZ = -0.003        # clamp just below the block centre so the jaw tips clear the table
 GRASP_LATERAL = 0.020    # along the jaw axis, seating the block against the fixed jaw
 HOVER_DZ = 0.06          # clearance above the grasp and above the target stack
+LOOK_DZ = 0.12           # stand off this far over the block before descending on it
 RETRACT_DZ = 0.05        # leave the seated block by this much, before the tool has to tilt
 REST_GAP = 0.001         # release this close to a seated stack, so it settles rather than drops
 
@@ -228,9 +231,53 @@ class Oracle:
         for i in range(1, steps + 1):
             self._act(start + _smoothstep(i / steps) * (goal - start))
 
+    # ---- where a cycle leaves the arm -------------------------------------
+    def retract(self):
+        """Stand the arm where a cycle would have left it, jaws open or shut.
+
+        A cycle ends withdrawn over the table, and a cycle whose grasp closed on nothing
+        ends there holding nothing. Starting an episode in that pose is what puts the
+        state after a missed pick in front of a policy while what to do next is still
+        being demonstrated.
+
+        The stack is imagined anywhere a block spawns, and the jaws take a quarter turn,
+        which spans every orientation a square block leaves them in. Where the arm cannot
+        hold the pose it starts folded up at the rest pose instead.
+        """
+        span = torch.tensor([[SPAWN_X[1] - SPAWN_X[0], SPAWN_Y[1] - SPAWN_Y[0], 0.0]],
+                            dtype=torch.float64, device=self.device)
+        low = torch.tensor([[SPAWN_X[0], SPAWN_Y[0], BLOCK_REST_Z + BLOCK_SIDE + REST_GAP]],
+                           dtype=torch.float64, device=self.device)
+        tcp = low + span * torch.rand(self.n, 3, dtype=torch.float64, device=self.device)
+        jaw = math.pi / 2 * torch.rand(self.n, dtype=torch.float64, device=self.device)
+
+        # Back off the way `run` leaves a block it has seated, anywhere from touching the
+        # stack to as far as the arm can hold, so the pose varies in height as well as
+        # over the table. Re-solving there reads whether that pose holds.
+        _, rise = ik_straight_up(tcp, jaw, self.limits, RETRACT_DZ)
+        tcp[:, 2] += rise * torch.rand(self.n, dtype=torch.float64, device=self.device)
+        q, reachable = ik(tcp, jaw)
+        home = torch.as_tensor(HOME_QPOS, dtype=torch.float64, device=self.device)
+        q = torch.where(self._in_limits(q, reachable)[:, None], q, home[:5])
+
+        shut = torch.rand(self.n, device=self.device) < 0.5
+        width = torch.where(shut, GRIPPER_CLOSED, GRIPPER_OPEN)
+        self.command = torch.cat([q, width[:, None].to(torch.float64)], -1)
+        self.env.agent.robot.set_qpos(self.command.to(torch.float32))
+        # On the GPU backend a write outside of a reset reaches the solver a step later and
+        # the render state not at all, so the cameras would go on showing the rest pose.
+        # This is the flush `reset` itself ends with.
+        if self.env.gpu_sim_enabled:
+            self.env.scene._gpu_apply_all()
+            self.env.scene.px.gpu_update_articulation_kinematics()
+            self.env.scene._gpu_fetch_all()
+
     # ---- one cycle --------------------------------------------------------
     def run(self, held, target, on_step=None):
         """Pick the ``held`` block and stack it on the ``target`` block, in every env.
+
+        The cycle runs from wherever the arm was left, so the same commands recover from a
+        missed pick as begin a fresh episode.
 
         ``on_step`` is handed each step's observation, alongside the ``self.command`` that
         produced it, so a demonstration can be recorded without rendering the scene twice.
@@ -239,9 +286,14 @@ class Oracle:
         held_pos, held_yaw = self._block(held)
 
         q_grasp, jaw = self._plan_grasp(held_pos, held_yaw)
-        q_clear, _ = ik_clearance(self._grasp_tcp(held_pos, jaw) + self._up(HOVER_DZ),
-                                  jaw, self.limits)
+        tcp = self._grasp_tcp(held_pos, jaw)
+        q_look, _ = ik_clearance(tcp + self._up(LOOK_DZ), jaw, self.limits)
+        q_clear, _ = ik_clearance(tcp + self._up(HOVER_DZ), jaw, self.limits)
 
+        # Come to the block from above and from a stand-off, whatever the arm was doing
+        # before: the jaws open on the way and the wrist camera arrives looking down at
+        # what the prompt names.
+        self._move(q_look, gripper=GRIPPER_OPEN)
         self._move(q_clear, q_grasp, gripper=GRIPPER_OPEN)
         self._grip(GRIPPER_CLOSED, CLOSE_STEPS)
 

@@ -35,7 +35,9 @@ class Plan:
     # than at the pose the episode starts from, so its outline is one more thing the
     # operator can see the overlay agreeing on.
     views: dict[str, np.ndarray]
-    # The commanded joint positions, one row per control step, in radians.
+    # The commanded joint positions, one row per control step, in radians. An episode
+    # begins wherever the oracle's previous cycle could have left the arm, so the first row
+    # is somewhere over the table rather than at rest.
     commands: np.ndarray
     # Whether the oracle stacked it in sim. A layout that fails there is not worth
     # carrying to the table.
@@ -65,6 +67,7 @@ def plan(env, index):
     views = parked(env)
 
     oracle = Oracle(env)
+    oracle.retract()
     commands = []
     oracle.run(env.held, env.target,
                on_step=lambda _: commands.append(oracle.command[0].cpu().numpy()))

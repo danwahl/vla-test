@@ -35,7 +35,9 @@ def screen(env, need, seed):
             "held": [pair[0] for pair in pairs], "target": [pair[1] for pair in pairs]}})
         layout = {key: value.cpu().numpy() for key, value in env.layout().items()}
 
-        Oracle(env).run(env.held, env.target)
+        oracle = Oracle(env)
+        oracle.retract()
+        oracle.run(env.held, env.target)
         won = env.evaluate()["success"].cpu().numpy()
         for i in np.flatnonzero(won):
             if len(kept[pairs[i]]) < need[pairs[i]]:
@@ -56,6 +58,10 @@ def rollout(env, layouts):
     obs, _ = env.reset(options={"layout": {
         key: np.stack([item[key] for item in layouts]) for key in layouts[0]}})
     oracle = Oracle(env)
+    # The arm moves before the episode does, so what the reset returned is a view of a pose
+    # that is already gone.
+    oracle.retract()
+    obs = env.get_obs()
     snapshots, commands = [], []
 
     def snapshot(obs):

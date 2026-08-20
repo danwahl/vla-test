@@ -194,7 +194,7 @@ def walk_to(robot, to_robot, held, command, observation):
 
 
 def home(robot, qpos=HOME_QPOS, seconds=3.0):
-    """Ramp to the sim's home pose, so an episode starts where a sim episode starts."""
+    """Ramp to ``qpos``, slowly enough that the servos track it under their own control."""
     start = np.array([robot.get_observation()[f"{joint}.pos"] for joint in JOINT_NAMES])
     for blend in _ramp(start, np.rad2deg(qpos), int(seconds * COMMAND_HZ)):
         robot.send_action({f"{joint}.pos": float(value)
