@@ -181,8 +181,8 @@ class Oracle:
         continuous across moves. ``at`` runs over 0..1 of the spline.
         """
         gripper = torch.as_tensor(gripper, dtype=torch.float64, device=self.device)
-        # The jaws take their width at the first keypose and hold it, so they are open
-        # before the descent onto a block begins.
+        # The jaws take their width at the first keypose and hold it. Every caller sets off
+        # at the width it asks for, so the channel is flat and the arm alone is what moves.
         grip = gripper.expand(self.n, len(keyposes) + 1).clone()
         grip[:, 0] = self.command[:, 5]
         knots = torch.cat([torch.stack([self.command[:, :5], *keyposes], 1),
@@ -290,9 +290,12 @@ class Oracle:
         q_look, _ = ik_clearance(tcp + self._up(LOOK_DZ), jaw, self.limits)
         q_clear, _ = ik_clearance(tcp + self._up(HOVER_DZ), jaw, self.limits)
 
+        # Whatever the jaws were left holding, they are holding nothing now, so they open
+        # against a still arm the way every other width change is made. The arm then sets
+        # off already able to take the block.
+        self._grip(GRIPPER_OPEN, RELEASE_STEPS)
         # Come to the block from above and from a stand-off, whatever the arm was doing
-        # before: the jaws open on the way and the wrist camera arrives looking down at
-        # what the prompt names.
+        # before, so the wrist camera arrives looking down at what the prompt names.
         self._move(q_look, gripper=GRIPPER_OPEN)
         self._move(q_clear, q_grasp, gripper=GRIPPER_OPEN)
         self._grip(GRIPPER_CLOSED, CLOSE_STEPS)
