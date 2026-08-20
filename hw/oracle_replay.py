@@ -88,11 +88,11 @@ def main():
                 if not console.place(laid_out.views, f"{where}: {laid_out.prompt}"):
                     continue
                 console.say(f"{where}: running")
-                # Out to the rest pose first and only then to where the episode begins: the
-                # arm crosses the table on a path it has taken before, and the first frame
-                # is recorded with it already standing where the sim arm stands.
+                # Out to the rest pose first and only then to where the episode begins, so
+                # the arm reaches over the blocks from a pose whose clearance is known
+                # rather than from wherever it was parked.
                 home(robot)
-                home(robot, laid_out.commands[0], seconds=2.0)
+                home(robot, laid_out.commands[0])
                 jaw = replay(robot, laid_out.commands, dataset, laid_out.prompt)
                 home(robot, PARK_QPOS)
                 console.say(f"{where}: jaw closed to {jaw:.1f}")

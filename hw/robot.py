@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass, field
+from itertools import chain
 from pathlib import Path
 
 import cv2
@@ -50,6 +51,8 @@ CAMERA_PORT = {"top": "pci-0000:0e:00.0-usb-0:4.4:1.0-video-index0",
 FPS = 10
 # The rate `walk_to` writes to the bus at.
 COMMAND_HZ = 50
+# How long `home` holds its last setpoint, comfortably past the servos' own lag.
+SETTLE_SECONDS = 0.5
 
 # How far a joint may be commanded from where it is, in degrees. The oracle's largest step
 # at the sim's control rate is 2.9 degrees on the arm, so this is clear of the motion it
@@ -194,8 +197,15 @@ def walk_to(robot, to_robot, held, command, observation):
 
 
 def home(robot, qpos=HOME_QPOS, seconds=3.0):
-    """Ramp to ``qpos``, slowly enough that the servos track it under their own control."""
+    """Ramp to ``qpos`` and hold there, at a pace the servos track under their own control.
+
+    A Feetech servo trails its setpoint by up to 90 ms, and the ramp runs to its last
+    setpoint at full speed, so the arm is still short of the pose when the ramp ends. The
+    hold is what lets it arrive, and whatever reads the arm next reads it standing still.
+    """
     start = np.array([robot.get_observation()[f"{joint}.pos"] for joint in JOINT_NAMES])
-    for blend in _ramp(start, np.rad2deg(qpos), int(seconds * COMMAND_HZ)):
+    goal = np.rad2deg(qpos)
+    for blend in chain(_ramp(start, goal, int(seconds * COMMAND_HZ)),
+                       _ramp(goal, goal, int(SETTLE_SECONDS * COMMAND_HZ))):
         robot.send_action({f"{joint}.pos": float(value)
                            for joint, value in zip(JOINT_NAMES, blend, strict=True)})

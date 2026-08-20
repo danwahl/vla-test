@@ -67,7 +67,9 @@ def plan(env, index):
     views = parked(env)
 
     oracle = Oracle(env)
-    oracle.retract()
+    # Seeded off the layout index, so a layout is the same demonstration every time it is
+    # planned and a re-take of one is a re-take of the same trajectory.
+    oracle.retract(torch.Generator(device=env.device).manual_seed(index))
     commands = []
     oracle.run(env.held, env.target,
                on_step=lambda _: commands.append(oracle.command[0].cpu().numpy()))

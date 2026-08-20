@@ -6,7 +6,7 @@ stand-off it looks from and where the jaws work against a still arm. Planning in
 space fixes the solution branch for a whole move. Every env runs the same phases with its
 own joint targets, which keeps the batch in lockstep for rendering.
 
-A cycle starts wherever the arm is, which `retract` is there to vary.
+A cycle starts wherever the arm is; `retract` varies that.
 """
 
 from __future__ import annotations
@@ -33,6 +33,8 @@ RELEASE_STEPS = 8
 JOINT_VEL_MAX = 0.5      # rad/s commanded; well under what the arm holds, to keep it smooth
 RAMP_STEPS = 4           # steps spent reaching that speed at each end of a move
 PROBE_SAMPLES = 256      # resolution at which a move is measured to pace its steps
+
+REST_SHARE = 1 / 3       # batches that begin at the rest pose, where a rollout begins
 
 
 def fold_yaw(yaw):
@@ -232,37 +234,47 @@ class Oracle:
             self._act(start + _smoothstep(i / steps) * (goal - start))
 
     # ---- where a cycle leaves the arm -------------------------------------
-    def retract(self):
+    def retract(self, generator=None):
         """Stand the arm where a cycle would have left it, jaws open or shut.
 
         A cycle ends withdrawn over the table, and a cycle whose grasp closed on nothing
         ends there holding nothing. Starting an episode in that pose is what puts the
         state after a missed pick in front of a policy while what to do next is still
-        being demonstrated.
+        being demonstrated. A rollout begins at the rest pose, so `REST_SHARE` of the time
+        the arm is left there and the demonstrations cover that start too.
+
+        One kind of start is drawn for the whole batch, since the phases run in lockstep
+        and a batch of mixed jaw states would spend the opening phase on arms with nothing
+        to open. ``generator`` draws it, for a caller that needs the same start twice.
 
         The stack is imagined anywhere a block spawns, and the jaws take a quarter turn,
         which spans every orientation a square block leaves them in. Where the arm cannot
         hold the pose it starts folded up at the rest pose instead.
         """
-        span = torch.tensor([[SPAWN_X[1] - SPAWN_X[0], SPAWN_Y[1] - SPAWN_Y[0], 0.0]],
-                            dtype=torch.float64, device=self.device)
-        low = torch.tensor([[SPAWN_X[0], SPAWN_Y[0], BLOCK_REST_Z + BLOCK_SIDE + REST_GAP]],
-                           dtype=torch.float64, device=self.device)
-        tcp = low + span * torch.rand(self.n, 3, dtype=torch.float64, device=self.device)
-        jaw = math.pi / 2 * torch.rand(self.n, dtype=torch.float64, device=self.device)
+        kw = {"dtype": torch.float64, "device": self.device}
+        if torch.rand((), generator=generator, **kw) < REST_SHARE:
+            return
+        width = (GRIPPER_CLOSED if torch.rand((), generator=generator, **kw) < 0.5
+                 else GRIPPER_OPEN)
+
+        # A box over the spawn area at stacking height, with no thickness: the stack the
+        # arm is imagined to have just left sits on the table like any other block.
+        low = torch.tensor([SPAWN_X[0], SPAWN_Y[0], BLOCK_REST_Z + BLOCK_SIDE + REST_GAP], **kw)
+        span = torch.tensor([SPAWN_X[1] - SPAWN_X[0], SPAWN_Y[1] - SPAWN_Y[0], 0.0], **kw)
+        tcp = low + span * torch.rand(self.n, 3, generator=generator, **kw)
+        jaw = math.pi / 2 * torch.rand(self.n, generator=generator, **kw)
 
         # Back off the way `run` leaves a block it has seated, anywhere from touching the
-        # stack to as far as the arm can hold, so the pose varies in height as well as
-        # over the table. Re-solving there reads whether that pose holds.
+        # stack to as far as the arm can hold, so the pose varies in height as well as over
+        # the table. That call gives back the rise it managed and not whether it managed
+        # one, so the pose is solved again to find out.
         _, rise = ik_straight_up(tcp, jaw, self.limits, RETRACT_DZ)
-        tcp[:, 2] += rise * torch.rand(self.n, dtype=torch.float64, device=self.device)
+        tcp[:, 2] += rise * torch.rand(self.n, generator=generator, **kw)
         q, reachable = ik(tcp, jaw)
-        home = torch.as_tensor(HOME_QPOS, dtype=torch.float64, device=self.device)
+        home = torch.as_tensor(HOME_QPOS, **kw)
         q = torch.where(self._in_limits(q, reachable)[:, None], q, home[:5])
 
-        shut = torch.rand(self.n, device=self.device) < 0.5
-        width = torch.where(shut, GRIPPER_CLOSED, GRIPPER_OPEN)
-        self.command = torch.cat([q, width[:, None].to(torch.float64)], -1)
+        self.command = torch.cat([q, torch.full((self.n, 1), width, **kw)], -1)
         self.env.agent.robot.set_qpos(self.command.to(torch.float32))
         # On the GPU backend a write outside of a reset reaches the solver a step later and
         # the render state not at all, so the cameras would go on showing the rest pose.
@@ -276,8 +288,8 @@ class Oracle:
     def run(self, held, target, on_step=None):
         """Pick the ``held`` block and stack it on the ``target`` block, in every env.
 
-        The cycle runs from wherever the arm was left, so the same commands recover from a
-        missed pick as begin a fresh episode.
+        The cycle runs from wherever the arm was left, which makes recovering from a missed
+        pick the same motion as starting fresh.
 
         ``on_step`` is handed each step's observation, alongside the ``self.command`` that
         produced it, so a demonstration can be recorded without rendering the scene twice.
@@ -290,12 +302,14 @@ class Oracle:
         q_look, _ = ik_clearance(tcp + self._up(LOOK_DZ), jaw, self.limits)
         q_clear, _ = ik_clearance(tcp + self._up(HOVER_DZ), jaw, self.limits)
 
-        # Whatever the jaws were left holding, they are holding nothing now, so they open
-        # against a still arm the way every other width change is made. The arm then sets
-        # off already able to take the block.
-        self._grip(GRIPPER_OPEN, RELEASE_STEPS)
-        # Come to the block from above and from a stand-off, whatever the arm was doing
-        # before, so the wrist camera arrives looking down at what the prompt names.
+        # Whatever the jaws were left on, they are holding nothing, so they open against a
+        # still arm the way every other width change is made. A batch that was left open
+        # has nothing to open and spends no steps here.
+        if float(self.command[:, 5].min()) < GRIPPER_OPEN:
+            self._grip(GRIPPER_OPEN, RELEASE_STEPS)
+        # Come to the block from a stand-off above it, as near top-down as the arm can hold
+        # that high, so the wrist camera arrives with the block and the table around it in
+        # view.
         self._move(q_look, gripper=GRIPPER_OPEN)
         self._move(q_clear, q_grasp, gripper=GRIPPER_OPEN)
         self._grip(GRIPPER_CLOSED, CLOSE_STEPS)

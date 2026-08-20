@@ -35,9 +35,9 @@ def screen(env, need, seed):
             "held": [pair[0] for pair in pairs], "target": [pair[1] for pair in pairs]}})
         layout = {key: value.cpu().numpy() for key, value in env.layout().items()}
 
-        oracle = Oracle(env)
-        oracle.retract()
-        oracle.run(env.held, env.target)
+        # From the rest pose, which is where every rollout starts: screening asks whether a
+        # layout is reachable at all, and the held-out ones are scored from there.
+        Oracle(env).run(env.held, env.target)
         won = env.evaluate()["success"].cpu().numpy()
         for i in np.flatnonzero(won):
             if len(kept[pairs[i]]) < need[pairs[i]]:

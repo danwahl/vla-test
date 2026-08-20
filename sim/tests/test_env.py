@@ -3,6 +3,7 @@ import numpy as np
 import torch
 
 import sim  # noqa: F401  (registers the env)
+from sim.agent import HOME_QPOS
 from sim.env import HOLD_REWARD, IMAGE_SIZE, read_layouts, write_layouts
 from sim.oracle import Oracle
 
@@ -115,3 +116,46 @@ def test_oracle_stacks_a_block_inside_the_episode_limit():
     assert len(steps) <= gym.spec("SO101BlockStack-v1").max_episode_steps
     assert env.evaluate()["success"].any()
     env.close()
+
+
+def test_oracle_recovers_from_the_pose_a_cycle_leaves():
+    """The longest cycle is the one that starts shut and away from the rest pose.
+
+    A demonstration collected from there has to fit the same limit, and the pose it starts
+    in has to be one the arm actually holds: a start off in the joint limits would be
+    recorded as a lurch on the first step.
+    """
+    env = gym.make("SO101BlockStack-v1", num_envs=4).unwrapped
+    limits = env.agent.robot.get_qlimits()[0]
+    away = 0
+
+    for seed in range(6):
+        env.reset(seed=seed)
+        oracle = Oracle(env)
+        oracle.retract(torch.Generator(device=env.device).manual_seed(seed))
+        start = oracle.command
+        assert ((start >= limits[:, 0]) & (start <= limits[:, 1])).all()
+        # The arm is standing in the pose before a step is taken, so the first frame of a
+        # demonstration is not recorded against a pose it is still travelling to.
+        assert torch.allclose(env.agent.robot.get_qpos(), start.float(), atol=1e-5)
+        away += int(not torch.allclose(start[:, :5].float(),
+                                       torch.tensor(HOME_QPOS[:5], device=env.device)))
+
+        steps = []
+        oracle.run(env.held, env.target, on_step=steps.append)
+        assert len(steps) <= gym.spec("SO101BlockStack-v1").max_episode_steps
+    env.close()
+    assert away, "every start landed at the rest pose"
+
+
+def test_retract_repeats_a_start_for_a_generator():
+    """A layout has to plan the same demonstration twice, or a re-take is a different one."""
+    env = gym.make("SO101BlockStack-v1", num_envs=4).unwrapped
+    starts = []
+    for _ in range(2):
+        env.reset(seed=0)
+        oracle = Oracle(env)
+        oracle.retract(torch.Generator(device=env.device).manual_seed(7))
+        starts.append(oracle.command.clone())
+    env.close()
+    assert torch.equal(*starts)

@@ -18,7 +18,7 @@ Rendering needs a GPU with Vulkan.
 
 A scripted oracle plans the pick-and-stack in closed form and drives every parallel environment at once. Layouts are screened on state alone and only the ones it stacks get rendered, so every episode is a success.
 
-An episode starts where a cycle would have left the arm, jaws open or shut, and its first move is out to a stand-off above the block the prompt names. A pick that closed on nothing leaves the arm among those same poses, so recovering from one is demonstrated in every episode.
+An episode starts either at the rest pose a rollout begins from or where a cycle would have left the arm, jaws open or shut, and its first move is out to a stand-off above the block the prompt names. A pick that closed on nothing leaves the arm among that second set of poses, so recovering from one is in the demonstrations.
 
 ```bash
 uv run python sim/scripts/collect.py OUT
