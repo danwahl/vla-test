@@ -160,6 +160,19 @@ uv run lerobot-train --config_path=train/pi05_so101_hw.yaml \
                      --wandb.run_id=pi05_so101_block_stack_hw
 ```
 
+lerobot trains on one dataset, so learning from sim and hardware together means writing both into one. `sim/scripts/combine.py` copies the sim dataset and appends the hardware episodes to the copy, repeated `--repeat` times, which is what sets how much of a batch comes off the arm. `train/pi05_so101_mix.yaml` trains on the result from `lerobot/pi05_base`, at the sim recipe and budget:
+
+```bash
+uv run python sim/scripts/combine.py /data/datasets/so101_block_stack_mix
+
+uv run lerobot-train --config_path=train/pi05_so101_mix.yaml \
+                     --output_dir=/data/checkpoints/pi05_so101_block_stack_mix \
+                     --job_name=pi05_so101_block_stack_mix \
+                     --wandb.run_id=pi05_so101_block_stack_mix
+```
+
+`train/pi05_so101_hw_base.yaml` is the same recipe on the hardware episodes alone, the control for what the sim start supplies.
+
 `hw/rollout.py` is the evaluation, with the arm where the simulator was. The blocks go anywhere on the table, the console's button starts the episode, and whether it stacked is the operator's call:
 
 ```bash
