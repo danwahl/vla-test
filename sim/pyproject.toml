@@ -10,6 +10,8 @@ dependencies = [
     "numpy>=2.0,<2.3",
     "gymnasium>=1.0,<2",
     "lerobot[dataset]==0.6.0",
+    # Bump with torch: a torchao release is built for one minor version of it.
+    "torchao==0.17.0",
 ]
 
 [build-system]

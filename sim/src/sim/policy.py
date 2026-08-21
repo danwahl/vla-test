@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
+import torch
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies import make_policy, make_pre_post_processors
 from lerobot.policies.rtc import RTCConfig
 from lerobot.processor import RenameObservationsProcessorStep
+from torchao.quantization import Int8WeightOnlyConfig, quantize_
+
+# Both run once per chunk and hand the action expert a cache, so they sit the far side of
+# the model from the commands. The weights are unpacked for each matmul, which buys memory
+# and not speed.
+OBSERVATION_MODULES = ("paligemma.model.language_model", "paligemma.model.vision_tower")
 
 
-def load_policy(checkpoint, metadata, horizon, device, rtc=True):
+def load_policy(checkpoint, metadata, horizon, device, rtc=True, int8=False):
     """The checkpoint's policy and the processors saved beside it, which carry the
     camera renaming and the normalization stats from training."""
     config = PreTrainedConfig.from_pretrained(checkpoint)
@@ -35,6 +42,14 @@ def load_policy(checkpoint, metadata, horizon, device, rtc=True):
     # chunk takes.
     model.paligemma_with_expert.paligemma.lm_head = None
     model.paligemma_with_expert.gemma_expert.lm_head = None
+    if int8:
+        # `version=2` scales each output channel on its own, so a channel with a narrow
+        # range keeps its resolution. Setting inductor's config is left alone because it
+        # turns on TF32 for every float32 matmul in the process, the vision tower included.
+        quantize_(model.paligemma_with_expert,
+                  Int8WeightOnlyConfig(version=2, set_inductor_config=False),
+                  filter_fn=lambda module, name: (isinstance(module, torch.nn.Linear)
+                                                  and name.startswith(OBSERVATION_MODULES)))
     policy.to(device)
     policy.eval()
     return policy, preprocessor, postprocessor

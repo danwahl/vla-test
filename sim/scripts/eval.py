@@ -99,6 +99,8 @@ def main():
     parser.add_argument("--repo-id", default="vla-test/so101_block_stack_sim")
     parser.add_argument("--horizon", type=int, default=20, help="steps executed per chunk")
     parser.add_argument("--no-rtc", action="store_true", help="denoise each chunk on its own")
+    parser.add_argument("--int8", action="store_true",
+                        help="hold the backbone and vision tower as int8")
     parser.add_argument("--envs", type=int, default=16, help="envs stepped in lockstep")
     parser.add_argument("--episodes", type=int, help="default: every held-out layout")
     parser.add_argument("--video", type=Path, help="write an mp4 per batch of layouts")
@@ -121,7 +123,7 @@ def main():
     on_device = torch.cuda.memory_allocated()
     policy, preprocessor, postprocessor = load_policy(
         args.checkpoint, LeRobotDatasetMetadata(args.repo_id, root=args.dataset),
-        args.horizon, env.device.type, rtc=not args.no_rtc)
+        args.horizon, env.device.type, rtc=not args.no_rtc, int8=args.int8)
     weights = torch.cuda.memory_allocated() - on_device
     torch.cuda.reset_peak_memory_stats()
 

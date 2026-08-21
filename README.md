@@ -57,7 +57,9 @@ uv run python sim/scripts/eval.py \
     /data/checkpoints/pi05_so101_block_stack_sim/checkpoints/last/pretrained_model
 ```
 
-`--video DIR` records each batch, and `--no-rtc` denoises each chunk on its own.
+`--video DIR` records each batch, and `--no-rtc` denoises each chunk on its own. The run reports what the checkpoint costs to run beside what it scores: the weights it loads, the peak it reaches rolling out, and the median time a chunk takes to denoise.
+
+`--int8` holds the weights that read the observation at eight bits, five sevenths of what a policy holds: the language backbone and the vision tower. The action expert and the projections that emit the commands keep the precision they were trained at. The 20k sim checkpoint holds 4.26 GiB of weights under the flag and 7.24 without, and scores 101 of the 150 held-out layouts against 105, six won and ten lost. An eval this size resolves about three points, so that is a difference it cannot separate from none. The weights are unpacked for each matmul, which costs about a tenth of the time a chunk takes.
 
 ## Reinforcement learning
 
