@@ -13,7 +13,8 @@ def load_policy(checkpoint, metadata, horizon, device, rtc=True):
     camera renaming and the normalization stats from training."""
     config = PreTrainedConfig.from_pretrained(checkpoint)
     config.pretrained_path = checkpoint
-    config.device = device
+    # Built in host memory and moved once it is the size it will run at.
+    config.device = "cpu"
     config.rtc_config = RTCConfig(execution_horizon=horizon, enabled=rtc)
 
     preprocessor, postprocessor = make_pre_post_processors(
@@ -34,5 +35,6 @@ def load_policy(checkpoint, metadata, horizon, device, rtc=True):
     # chunk takes.
     model.paligemma_with_expert.paligemma.lm_head = None
     model.paligemma_with_expert.gemma_expert.lm_head = None
+    policy.to(device)
     policy.eval()
     return policy, preprocessor, postprocessor
