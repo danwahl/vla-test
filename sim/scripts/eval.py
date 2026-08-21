@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 from pathlib import Path
 
 import gymnasium as gym
@@ -41,6 +42,8 @@ def rollout(env, policy, preprocessor, postprocessor, layouts, horizon, steps, f
 
     A stack is scored the first step it holds, since the arm carries on moving afterwards.
     Passing a ``frames`` list also collects the inspection view, tiled over the batch.
+
+    Also gives back what each chunk took to denoise.
     """
     obs, _ = env.reset(options={"layout": {
         "xy": np.array([[p[:2] for p in item["positions"]] for item in layouts], np.float32),
@@ -51,14 +54,18 @@ def rollout(env, policy, preprocessor, postprocessor, layouts, horizon, steps, f
     tasks = [item["prompt"] for item in layouts]
     stacked = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
 
-    leftover = None
+    leftover, latencies = None, []
     for _ in range(0, steps, horizon):
+        began = time.perf_counter()
         chunk = policy.predict_action_chunk(
             preprocessor(observation(obs, tasks)),
             prev_chunk_left_over=leftover,
             inference_delay=0,
             execution_horizon=horizon,
         )
+        # The call queues work and returns, so the clock has to wait for the device.
+        torch.cuda.synchronize()
+        latencies.append(time.perf_counter() - began)
         leftover = chunk[:, horizon:]
         commands = postprocessor(chunk)
         for step in range(horizon):
@@ -67,7 +74,7 @@ def rollout(env, policy, preprocessor, postprocessor, layouts, horizon, steps, f
             if frames is not None:
                 frames.append(tile_images(env.render_rgb_array().cpu().numpy(),
                                           nrows=round(env.num_envs ** 0.5)))
-    return stacked.cpu().numpy(), env.evaluate()["lifted"].cpu().numpy()
+    return stacked.cpu().numpy(), env.evaluate()["lifted"].cpu().numpy(), latencies
 
 
 def report(results):
@@ -109,19 +116,25 @@ def main():
     env = gym.make("SO101BlockStack-v1", num_envs=args.envs, obs_mode="rgb",
                    render_mode="rgb_array").unwrapped
     steps = gym.spec("SO101BlockStack-v1").max_episode_steps
+    # The env is already on the device, so the checkpoint's own footprint is what loading
+    # it adds.
+    on_device = torch.cuda.memory_allocated()
     policy, preprocessor, postprocessor = load_policy(
         args.checkpoint, LeRobotDatasetMetadata(args.repo_id, root=args.dataset),
         args.horizon, env.device.type, rtc=not args.no_rtc)
+    weights = torch.cuda.memory_allocated() - on_device
+    torch.cuda.reset_peak_memory_stats()
 
-    results = []
+    results, latencies = [], []
     for start in range(0, len(layouts), env.num_envs):
         batch = layouts[start:start + env.num_envs]
         padded = batch + [batch[-1]] * (env.num_envs - len(batch))
         frames = [] if args.video else None
-        stacked, lifted = rollout(env, policy, preprocessor, postprocessor, padded,
-                                  args.horizon, steps, frames)
+        stacked, lifted, timings = rollout(env, policy, preprocessor, postprocessor, padded,
+                                           args.horizon, steps, frames)
         results += [{**item, "stacked": bool(stacked[i]), "lifted": bool(lifted[i])}
                     for i, item in enumerate(batch)]
+        latencies += timings
         if frames:
             images_to_video(frames, str(args.video), f"{start:03d}",
                             fps=round(1 / env.control_timestep))
@@ -132,6 +145,10 @@ def main():
     if args.out:
         args.out.write_text("".join(json.dumps(row) + "\n" for row in results))
     report(results)
+    # Median over every chunk, so the first one's kernel selection does not read as latency.
+    print(f"{weights / 2**30:.2f} GiB of weights, "
+          f"{torch.cuda.max_memory_allocated() / 2**30:.2f} GiB peak, "
+          f"{1000 * float(np.median(latencies)):.0f} ms per chunk at {args.envs} envs")
 
 
 if __name__ == "__main__":
