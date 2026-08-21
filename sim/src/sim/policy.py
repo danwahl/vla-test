@@ -26,5 +26,13 @@ def load_policy(checkpoint, metadata, horizon, device, rtc=True):
     renaming = next(step for step in preprocessor.steps
                     if isinstance(step, RenameObservationsProcessorStep))
     policy = make_policy(cfg=config, ds_meta=metadata, rename_map=renaming.rename_map)
+    # A checkpoint saved with its adapter comes back wrapped, which puts the module holding
+    # the backbone a level deeper than one saved without.
+    inner = policy.model
+    model = inner if hasattr(inner, "paligemma_with_expert") else inner.model
+    # Actions leave through `action_out_proj`, so neither vocabulary head is on the path a
+    # chunk takes.
+    model.paligemma_with_expert.paligemma.lm_head = None
+    model.paligemma_with_expert.gemma_expert.lm_head = None
     policy.eval()
     return policy, preprocessor, postprocessor
