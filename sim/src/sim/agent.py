@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import ClassVar
+from xml.etree import ElementTree
 
 import numpy as np
 import sapien
@@ -25,13 +26,26 @@ BASE_POSE = sapien.Pose(p=[0.0, 0.0, 0.74])
 # The arm folded back over its own base, the physical SO-101's rest pose.
 HOME_QPOS = np.array([-0.1414, 0.3624, -1.1317, 1.5485, -0.0915, GRIPPER_OPEN], np.float32)
 
+URDF_PATH = Path(__file__).parent / "description" / "so101.urdf"
+
+
+def _joint_limits():
+    """Each joint's travel, lower then upper, in the order of ``JOINT_NAMES``."""
+    limits = {joint.get("name"): joint.find("limit")
+              for joint in ElementTree.parse(URDF_PATH).getroot().findall("joint")}
+    return np.array([[float(limits[name].get(edge)) for edge in ("lower", "upper")]
+                     for name in JOINT_NAMES], np.float32)
+
+
+LIMITS = _joint_limits()
+
 _GRIP = {"material": "grip", "patch_radius": 0.1, "min_patch_radius": 0.1}
 
 
 @register_agent()
 class SO101(BaseAgent):
     uid = "so101"
-    urdf_path = str(Path(__file__).parent / "description" / "so101.urdf")
+    urdf_path = str(URDF_PATH)
     urdf_config: ClassVar[dict] = {
         "_materials": {
             "grip": {"static_friction": 1.5, "dynamic_friction": 1.5, "restitution": 0.0}

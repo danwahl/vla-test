@@ -2,7 +2,7 @@ import numpy as np
 
 from hw.robot import MAX_RELATIVE_TARGET
 from hw.teleop import BOUNDS, LIMITS, TILT_RANGE, SpaceMouseToJoints, solve, start_qpos
-from sim.agent import ARM_JOINTS, JOINT_NAMES
+from sim.agent import JOINT_NAMES
 
 CHANNELS = ("dx", "dy", "dz", "d_tilt", "d_yaw", "gripper")
 
@@ -43,10 +43,10 @@ def test_no_command_outruns_the_follower():
         for _ in range(30):
             current = held(step, act)
             assert np.abs(current - previous).max() <= cap
-            assert (step.angles >= LIMITS[0]).all() and (step.angles <= LIMITS[1]).all()
+            assert (step.angles >= LIMITS[:5, 0]).all() and (step.angles <= LIMITS[:5, 1]).all()
             previous = current
 
 
 def test_joint_limits_come_from_the_description():
-    assert LIMITS.shape == (2, len(ARM_JOINTS))
-    assert (LIMITS[0] < LIMITS[1]).all()
+    assert LIMITS.shape == (len(JOINT_NAMES), 2)
+    assert (LIMITS[:, 0] < LIMITS[:, 1]).all()

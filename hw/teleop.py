@@ -12,7 +12,6 @@ demonstrations occupy. Episode control is `lerobot-record`'s: the keys it prints
 from __future__ import annotations
 
 import argparse
-import xml.etree.ElementTree as ElementTree
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -29,7 +28,7 @@ from lerobot.utils.keyboard_input import init_keyboard_listener
 
 from hw.robot import FPS, MAX_RELATIVE_TARGET, actions, follower, home, observations
 from hw.spacemouse import SpaceMouse, SpaceMouseConfig
-from sim.agent import ARM_JOINTS, GRIPPER_CLOSED, GRIPPER_OPEN, SO101
+from sim.agent import ARM_JOINTS, GRIPPER_CLOSED, GRIPPER_OPEN, LIMITS
 from sim.dataset import create
 from sim.env import BLOCK_NAMES, TABLE_TOP_Z, prompt
 from sim.kinematics import HOME_JAW_YAW, HOME_TCP, HOME_TILT, TILT_DOWN, ik
@@ -49,21 +48,12 @@ JAW_RATE = (GRIPPER_OPEN - GRIPPER_CLOSED) / FPS
 MAX_JOINT_STEP = np.deg2rad(MAX_RELATIVE_TARGET)
 
 
-def _joint_limits():
-    joints = {joint.get("name"): joint.find("limit")
-              for joint in ElementTree.parse(SO101.urdf_path).getroot().findall("joint")}
-    return np.array([[float(joints[name].get(edge)) for name in ARM_JOINTS]
-                     for edge in ("lower", "upper")])
-
-
-LIMITS = _joint_limits()
-
-
 def solve(tcp, jaw_yaw, tilt):
     """The arm joints for a tool pose, and whether the arm can hold them."""
     angles, reachable = ik(tcp, jaw_yaw, tilt)
     angles = angles.numpy()
-    return angles, bool(reachable) and bool(((LIMITS[0] <= angles) & (angles <= LIMITS[1])).all())
+    return angles, bool(reachable) and bool(
+        ((LIMITS[:5, 0] <= angles) & (angles <= LIMITS[:5, 1])).all())
 
 
 @dataclass
