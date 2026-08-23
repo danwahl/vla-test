@@ -66,10 +66,9 @@ def plan(env, index):
     env.reset(options={"episode_id": torch.tensor([index])})
     views = parked(env)
 
+    # The layout carries the pose it opens in, so planning it twice plans the same
+    # trajectory and the arm and the simulator set off from the same place.
     oracle = Oracle(env)
-    # Seeded off the layout index, so a layout is the same demonstration every time it is
-    # planned and a re-take of one is a re-take of the same trajectory.
-    oracle.retract(torch.Generator(device=env.device).manual_seed(index))
     commands = []
     oracle.run(env.held, env.target,
                on_step=lambda _: commands.append(oracle.command[0].cpu().numpy()))

@@ -88,6 +88,7 @@ def write_layouts(path, layouts, key):
                 "positions": positions,
                 "yaws": [float(yaw) for yaw in item["yaw"]],
                 "max_yaw": SPAWN_YAW,
+                "start": [float(q) for q in item["qpos"]],
             }) + "\n")
 
 
@@ -100,6 +101,7 @@ def read_layouts(path):
         "yaw": np.array([row["yaws"] for row in rows], np.float32),
         "held": np.array([row["held"] for row in rows]),
         "target": np.array([row["target"] for row in rows]),
+        "qpos": np.array([row.get("start", HOME_QPOS) for row in rows], np.float32),
     }
 
 
@@ -197,7 +199,6 @@ class SO101BlockStack(BaseEnv):
     def _initialize_episode(self, env_idx, options):
         with torch.device(self.device):
             b = len(env_idx)
-            self.agent.robot.set_qpos(torch.tensor(HOME_QPOS).repeat(b, 1))
             self.agent.robot.set_pose(BASE_POSE)
 
             # Spawns and colour pair can each be given instead of sampled, so a run can be
@@ -221,6 +222,9 @@ class SO101BlockStack(BaseEnv):
             else:
                 held = torch.randint(3, (b,))
                 target = (held + 1 + torch.randint(2, (b,))) % 3
+
+            self.agent.robot.set_qpos(given("qpos", torch.float32, 6) if "qpos" in layout
+                                      else torch.tensor(HOME_QPOS).repeat(b, 1))
 
             for i, name in enumerate(BLOCK_NAMES):
                 pose = torch.zeros(b, 7)
@@ -280,11 +284,15 @@ class SO101BlockStack(BaseEnv):
 
         The blocks stand upright until something pushes them, so a spawn quaternion is a
         yaw and nothing else. Read it before stepping.
+
+        The tensors are cloned, so handing one straight back to ``reset`` is not a read of
+        state the same call is writing.
         """
         quat = torch.stack([self.blocks[n].pose.q for n in BLOCK_NAMES], dim=1)
-        return {"xy": self._block_positions()[..., :2],
+        return {"xy": self._block_positions()[..., :2].clone(),
                 "yaw": 2 * torch.atan2(quat[..., 3], quat[..., 0]),
-                "held": self.held, "target": self.target}
+                "held": self.held.clone(), "target": self.target.clone(),
+                "qpos": self.agent.robot.get_qpos().clone()}
 
     def prompts(self):
         """What each env in the batch was asked to do."""

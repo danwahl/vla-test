@@ -127,35 +127,40 @@ def test_oracle_recovers_from_the_pose_a_cycle_leaves():
     """
     env = gym.make("SO101BlockStack-v1", num_envs=4).unwrapped
     limits = env.agent.robot.get_qlimits()[0]
-    away = 0
 
     for seed in range(6):
         env.reset(seed=seed)
-        oracle = Oracle(env)
-        oracle.retract(torch.Generator(device=env.device).manual_seed(seed))
-        start = oracle.command
+        start = Oracle(env).draw_start(torch.Generator(device=env.device).manual_seed(seed))
         assert ((start >= limits[:, 0]) & (start <= limits[:, 1])).all()
+        # Every episode opens part way through a cycle, so the rest pose is a fallback for
+        # a pose the arm cannot hold.
+        at_rest = torch.isclose(start[:, :5].float(),
+                                torch.tensor(HOME_QPOS[:5], device=env.device)).all(-1)
+        assert not at_rest.any()
+
+        env.reset(options={"layout": {**env.layout(), "qpos": start}})
         # The arm is standing in the pose before a step is taken, so the first frame of a
         # demonstration is not recorded against a pose it is still travelling to.
+        oracle = Oracle(env)
         assert torch.allclose(env.agent.robot.get_qpos(), start.float(), atol=1e-5)
-        away += int(not torch.allclose(start[:, :5].float(),
-                                       torch.tensor(HOME_QPOS[:5], device=env.device)))
+        assert torch.allclose(oracle.command, start, atol=1e-5)
 
         steps = []
         oracle.run(env.held, env.target, on_step=steps.append)
         assert len(steps) <= gym.spec("SO101BlockStack-v1").max_episode_steps
     env.close()
-    assert away, "every start landed at the rest pose"
 
 
-def test_retract_repeats_a_start_for_a_generator():
-    """A layout has to plan the same demonstration twice, or a re-take is a different one."""
+def test_a_layout_carries_the_pose_it_opens_in():
+    """A layout has to open in the same pose every time, or a re-take is a different one."""
     env = gym.make("SO101BlockStack-v1", num_envs=4).unwrapped
-    starts = []
+    env.reset(seed=0)
+    start = Oracle(env).draw_start(torch.Generator(device=env.device).manual_seed(7))
+
+    poses = []
     for _ in range(2):
-        env.reset(seed=0)
-        oracle = Oracle(env)
-        oracle.retract(torch.Generator(device=env.device).manual_seed(7))
-        starts.append(oracle.command.clone())
+        env.reset(seed=0, options={"layout": {**env.layout(), "qpos": start}})
+        poses.append(env.agent.robot.get_qpos().clone())
     env.close()
-    assert torch.equal(*starts)
+    assert torch.equal(*poses)
+    assert torch.allclose(poses[0], start.float(), atol=1e-5)

@@ -18,13 +18,15 @@ Rendering needs a GPU with Vulkan.
 
 A scripted oracle plans the pick-and-stack in closed form and drives every parallel environment at once. Layouts are screened on state alone and only the ones it stacks get rendered, so every episode is a success.
 
-An episode starts either at the rest pose a rollout begins from or where a cycle would have left the arm, jaws open or shut, and its first move is out to a stand-off above the block the prompt names. A pick that closed on nothing leaves the arm among that second set of poses, so recovering from one is in the demonstrations.
+An episode starts where a cycle would leave the arm, jaws open or shut, and its first move is out to a stand-off above the block the prompt names. A pick that closed on nothing leaves the arm among those poses, so recovering from one is in the demonstrations.
+
+Every env carries its own cursor through the cycle, so each one arrives at a keypose in the steps its own travel takes and an episode is as long as its own arm was moving.
 
 ```bash
 uv run python sim/scripts/collect.py OUT
 ```
 
-360 episodes in [LeRobot](https://github.com/huggingface/lerobot) v3.0 format at 10 Hz, 60 for each of the six colour orderings: the five arm joints and the gripper as `observation.state` and `action`, and 480x480 H.264 from the wrist and top cameras. `meta/train_layouts.jsonl` records the spawn each episode started from, and `meta/eval_layouts.jsonl` 150 more, held out, to measure a policy on.
+360 episodes in [LeRobot](https://github.com/huggingface/lerobot) v3.0 format at 10 Hz, 60 for each of the six colour orderings: the five arm joints and the gripper as `observation.state` and `action`, and 480x480 H.264 from the wrist and top cameras. `meta/train_layouts.jsonl` records the spawn and the opening pose each episode started from, and `meta/eval_layouts.jsonl` 150 more, held out, to measure a policy on. Both are what `reset` takes back, so an eval sets off from where a demonstration did.
 
 ## Fine-tuning
 
@@ -57,7 +59,7 @@ uv run python sim/scripts/eval.py \
     /data/checkpoints/pi05_so101_block_stack_sim/checkpoints/last/pretrained_model
 ```
 
-`--video DIR` records each batch, and `--no-rtc` denoises each chunk on its own. The run reports what the checkpoint costs to run beside what it scores: the weights it loads, the peak it reaches rolling out, and the median time a chunk takes to denoise.
+`--video DIR` records each batch, and `--no-rtc` denoises each chunk on its own. `--layouts FILE` scores the checkpoint on another dataset's held-out layouts; the normalization travels with the checkpoint, so only the spawns change. The run reports what the checkpoint costs to run beside what it scores: the weights it loads, the peak it reaches rolling out, and the median time a chunk takes to denoise.
 
 `--int8` holds the weights that read the observation at eight bits, five sevenths of what a policy holds: the language backbone and the vision tower. The action expert and the projections that emit the commands keep the precision they were trained at. The 20k sim checkpoint holds 4.26 GiB of weights under the flag and 7.24 without, and scores 101 of the 150 held-out layouts against 105, six won and ten lost. An eval this size resolves about three points, so that is a difference it cannot separate from none. The weights are unpacked for each matmul, which costs about a tenth of the time a chunk takes.
 

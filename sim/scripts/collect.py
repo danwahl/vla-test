@@ -33,10 +33,13 @@ def screen(env, need, seed):
         pairs = [short[i % len(short)] for i in range(env.num_envs)]
         env.reset(seed=seed + batch, options={"layout": {
             "held": [pair[0] for pair in pairs], "target": [pair[1] for pair in pairs]}})
+        # Drawn against the spawns that just landed and fed back through `reset`, so the
+        # layout carries the pose the oracle was screened from and a replay of it opens
+        # the arm in the same place.
+        start = Oracle(env).draw_start()
+        env.reset(options={"layout": {**env.layout(), "qpos": start}})
         layout = {key: value.cpu().numpy() for key, value in env.layout().items()}
 
-        # From the rest pose, which is where every rollout starts: screening asks whether a
-        # layout is reachable at all, and the held-out ones are scored from there.
         Oracle(env).run(env.held, env.target)
         won = env.evaluate()["success"].cpu().numpy()
         for i in np.flatnonzero(won):
@@ -51,17 +54,14 @@ def screen(env, need, seed):
 def rollout(env, layouts):
     """Replay a batch of ``layouts`` with the cameras on, keeping every step.
 
-    Returns the commands, the observations that earned them, and which envs stacked. One
-    snapshot is taken before the first command and one after each, so ``snapshots[t]`` is
-    what the oracle saw when it chose ``commands[t]``.
+    Returns the commands, the observations that earned them, how many steps each env spent
+    on its own cycle, and which envs stacked. One snapshot is taken before the first command
+    and one after each, so ``snapshots[t]`` is what the oracle saw when it chose
+    ``commands[t]``.
     """
     obs, _ = env.reset(options={"layout": {
         key: np.stack([item[key] for item in layouts]) for key in layouts[0]}})
     oracle = Oracle(env)
-    # The arm moves before the episode does, so what the reset returned is a view of a pose
-    # that is already gone.
-    oracle.retract()
-    obs = env.get_obs()
     snapshots, commands = [], []
 
     def snapshot(obs):
@@ -73,21 +73,23 @@ def rollout(env, layouts):
         snapshot(obs)
 
     snapshot(obs)
-    oracle.run(env.held, env.target, on_step=step)
-    return commands, snapshots, env.evaluate()["success"].cpu().numpy()
+    ran = oracle.run(env.held, env.target, on_step=step)
+    return (commands, snapshots, ran.cpu().numpy(),
+            env.evaluate()["success"].cpu().numpy())
 
 
 def record(env, layouts, dataset, quota):
     """Replay ``layouts`` and save each one as an episode, returning the ones written.
 
-    Every env in a batch runs the same phases, so an episode is as long as the batch's
-    slowest env; the tail of a short last batch repeats a layout and is dropped.
+    An episode runs as long as its own env took, which is what keeps the arms that finished
+    early out of the ones still going; the tail of a short last batch repeats a layout and
+    is dropped.
     """
     written = []
     for start in range(0, len(layouts), env.num_envs):
         batch = layouts[start:start + env.num_envs]
         padded = batch + [batch[-1]] * (env.num_envs - len(batch))
-        commands, snapshots, won = rollout(env, padded)
+        commands, snapshots, ran, won = rollout(env, padded)
 
         for i, item in enumerate(batch):
             pair = (int(item["held"]), int(item["target"]))
@@ -95,7 +97,8 @@ def record(env, layouts, dataset, quota):
                 continue
             quota[pair] -= 1
             task = prompt(*pair)
-            for command, (qpos, *images) in zip(commands, snapshots[:-1], strict=True):
+            for command, (qpos, *images) in zip(commands[:ran[i]], snapshots[:ran[i]],
+                                                strict=True):
                 dataset.add_frame({
                     "observation.state": qpos[i].astype(np.float32),
                     "action": command[i].astype(np.float32),
@@ -105,7 +108,7 @@ def record(env, layouts, dataset, quota):
                 })
             dataset.save_episode()
             written.append(item)
-        print(f"record {len(written)} episodes, {len(commands)} frames each, "
+        print(f"record {len(written)} episodes, {ran.min()}-{ran.max()} frames each, "
               f"{sum(quota.values())} still owed", flush=True)
     return written
 

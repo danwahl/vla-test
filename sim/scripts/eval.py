@@ -21,6 +21,7 @@ from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
 from mani_skill.utils.visualization.misc import images_to_video, tile_images
 
 import sim  # noqa: F401  (registers the env)
+from sim.agent import HOME_QPOS
 from sim.dataset import CAMERAS
 from sim.env import BLOCK_NAMES
 from sim.policy import load_policy
@@ -41,7 +42,8 @@ def rollout(env, policy, preprocessor, postprocessor, layouts, horizon, steps, f
     """Drive a batch of layouts for ``steps``, replanning every ``horizon``.
 
     A stack is scored the first step it holds, since the arm carries on moving afterwards.
-    Passing a ``frames`` list also collects the inspection view, tiled over the batch.
+    Passing a ``frames`` list also collects the inspection view, tiled over the batch, from
+    the pose the layout opens in.
 
     Also gives back what each chunk took to denoise.
     """
@@ -50,9 +52,17 @@ def rollout(env, policy, preprocessor, postprocessor, layouts, horizon, steps, f
         "yaw": np.array([item["yaws"] for item in layouts], np.float32),
         "held": np.array([item["held"] for item in layouts]),
         "target": np.array([item["target"] for item in layouts]),
+        "qpos": np.array([item.get("start", HOME_QPOS) for item in layouts], np.float32),
     }})
     tasks = [item["prompt"] for item in layouts]
     stacked = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+
+    def snapshot():
+        frames.append(tile_images(env.render_rgb_array().cpu().numpy(),
+                                  nrows=round(env.num_envs ** 0.5)))
+
+    if frames is not None:
+        snapshot()
 
     leftover, latencies = None, []
     for _ in range(0, steps, horizon):
@@ -72,8 +82,7 @@ def rollout(env, policy, preprocessor, postprocessor, layouts, horizon, steps, f
             obs, _, success, _, _ = env.step(commands[:, step])
             stacked |= success
             if frames is not None:
-                frames.append(tile_images(env.render_rgb_array().cpu().numpy(),
-                                          nrows=round(env.num_envs ** 0.5)))
+                snapshot()
     return stacked.cpu().numpy(), env.evaluate()["lifted"].cpu().numpy(), latencies
 
 
@@ -97,6 +106,11 @@ def main():
     parser.add_argument("--dataset", type=Path,
                         default=Path("/data/datasets/so101_block_stack_sim"))
     parser.add_argument("--repo-id", default="vla-test/so101_block_stack_sim")
+    # The normalization comes from the processors saved beside the checkpoint, so a
+    # checkpoint can be scored on another dataset's held-out layouts and only the spawns
+    # change.
+    parser.add_argument("--layouts", type=Path,
+                        help="default: the dataset's own held-out layouts")
     parser.add_argument("--horizon", type=int, default=20, help="steps executed per chunk")
     parser.add_argument("--no-rtc", action="store_true", help="denoise each chunk on its own")
     parser.add_argument("--int8", action="store_true",
@@ -112,7 +126,7 @@ def main():
     args = parser.parse_args()
 
     torch.manual_seed(args.seed)
-    with (args.dataset / "meta" / "eval_layouts.jsonl").open() as file:
+    with (args.layouts or args.dataset / "meta" / "eval_layouts.jsonl").open() as file:
         layouts = [json.loads(line) for line in file][:args.episodes]
 
     env = gym.make("SO101BlockStack-v1", num_envs=args.envs, obs_mode="rgb",
