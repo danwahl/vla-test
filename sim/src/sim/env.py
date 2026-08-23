@@ -285,8 +285,8 @@ class SO101BlockStack(BaseEnv):
         The blocks stand upright until something pushes them, so a spawn quaternion is a
         yaw and nothing else. Read it before stepping.
 
-        The tensors are cloned, so handing one straight back to ``reset`` is not a read of
-        state the same call is writing.
+        The tensors are cloned, so a layout handed straight back to ``reset`` carries the
+        values it was read at.
         """
         quat = torch.stack([self.blocks[n].pose.q for n in BLOCK_NAMES], dim=1)
         return {"xy": self._block_positions()[..., :2].clone(),

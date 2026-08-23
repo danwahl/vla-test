@@ -5,10 +5,9 @@ splines that cross each one without stopping on it, so the arm comes to rest onl
 stand-off it looks from and where the jaws work against a still arm. Planning in joint
 space fixes the solution branch for a whole move.
 
-Every env carries its own cursor through the phases, so what one env is doing at a given
-step says nothing about what the others are, and a layout runs the same however it is
-batched. The batch is stepped on one command tensor, so an env that has finished holds
-the pose it finished in while the rest carry on.
+Every env carries its own cursor through the phases, so which phase an env is in at a given
+step follows from its own travel alone. The batch is stepped on one command tensor, so an
+env that has finished holds the pose it finished in while the rest carry on.
 
 A cycle starts wherever the arm is; `draw_start` samples a pose to put it in.
 """
@@ -257,7 +256,7 @@ class Oracle:
 
     # ---- where a cycle leaves the arm -------------------------------------
     def draw_start(self, generator=None):
-        """A pose where a cycle would have left the arm, jaws open or shut.
+        """A pose a cycle leaves the arm in, jaws open or shut.
 
         A cycle ends withdrawn over the table, and a cycle whose grasp closed on nothing
         ends there holding nothing. Opening every episode in that pose is what puts the
@@ -286,8 +285,8 @@ class Oracle:
 
         # Back off the way `run` leaves a block it has seated, anywhere from touching the
         # stack to as far as the arm can hold, so the pose varies in height as well as over
-        # the table. That call gives back the rise it managed and not whether it managed
-        # one, so the pose is solved again to find out.
+        # the table. The rise that call reports is a distance, so the pose is solved again
+        # to learn whether the arm holds it.
         _, rise = ik_straight_up(tcp, jaw, self.limits, RETRACT_DZ)
         tcp[:, 2] += rise * torch.rand(self.n, generator=generator, **kw)
         q, reachable = ik(tcp, jaw)
@@ -355,12 +354,11 @@ class Oracle:
         plan = torch.zeros(self.n, 0, 6, dtype=torch.float64, device=self.device)
 
         while True:
-            # Every env that has run its phase out takes up the next one, and a phase it
-            # has no work in passes in the same breath.
+            # Every env that has run its phase out takes up the next one, and a phase with
+            # no work in it is taken up and finished on the pass after.
             while (ready := (at >= due) & (into < PHASES)).any():
                 # The phase each env stands on the brink of, read before any of them move,
-                # so taking one up cannot hand an env to the phase after it in the same
-                # pass. A phase with no work in it comes round again on the next.
+                # so an env takes up exactly one phase per pass.
                 brink = into.clone()
                 for which in brink[ready].unique():
                     entering = ready & (brink == which)

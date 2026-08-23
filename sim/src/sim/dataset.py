@@ -41,13 +41,13 @@ def finalize(dataset):
     """Close the episodes out, with both joint features normalized on the arm's travel.
 
     pi0.5 reads ``observation.state`` as one of 256 bins spanning q01 to q99, spelled out in
-    the prompt as text, and nothing clips it: a joint outside that span reads as one of the
+    the prompt as text and clipped nowhere, so a joint outside that span reads as one of the
     span's edges whatever angle it is really at. ``action`` is a joint position too, so it
     takes the same span. The arm's travel holds every pose it can reach and means the same
     thing in every dataset the arm appears in.
 
-    Callers close a dataset out from a ``finally``, where a run stopped before it saved an
-    episode has statistics to write nothing about.
+    Callers close a dataset out from a ``finally``, so a run that stopped before saving an
+    episode reaches here with no statistics file to stamp.
     """
     dataset.finalize()
     path = dataset.root / "meta" / "stats.json"

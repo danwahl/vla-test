@@ -81,9 +81,8 @@ def rollout(env, layouts):
 def record(env, layouts, dataset, quota):
     """Replay ``layouts`` and save each one as an episode, returning the ones written.
 
-    An episode runs as long as its own env took, which is what keeps the arms that finished
-    early out of the ones still going; the tail of a short last batch repeats a layout and
-    is dropped.
+    An episode runs as long as its own env took, so its frames stop where its own arm
+    stopped moving; the tail of a short last batch repeats a layout and is dropped.
     """
     written = []
     for start in range(0, len(layouts), env.num_envs):
