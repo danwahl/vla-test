@@ -63,7 +63,7 @@ uv run python sim/scripts/eval.py \
 
 `--video DIR` records each batch, and `--no-rtc` denoises each chunk on its own. `--layouts FILE` scores the checkpoint on another dataset's held-out layouts; the normalization travels with the checkpoint, so only the spawns change. The run reports what the checkpoint costs to run beside what it scores: the weights it loads, the peak it reaches rolling out, and the median time a chunk takes to denoise.
 
-`--int8` holds the weights that read the observation at eight bits, five sevenths of what a policy holds: the language backbone and the vision tower. The action expert and the projections that emit the commands keep the precision they were trained at. The 20k sim checkpoint holds 4.26 GiB of weights under the flag and 7.24 without, and scores 101 of the 150 held-out layouts against 105, six won and ten lost. An eval this size resolves about three points, so that is a difference it cannot separate from none. The weights are unpacked for each matmul, which costs about a tenth of the time a chunk takes.
+`--int8` holds the weights that read the observation at eight bits, five sevenths of what a policy holds: the language backbone and the vision tower. The action expert and the projections that emit the commands keep the precision they were trained at. The 20k sim checkpoint holds 4.26 GiB of weights under the flag and 7.24 without. Over three seeds of the 150 held-out layouts it scores 1.3 behind, give or take four. The two disagree on 31 layouts and no layout goes the same way on all three seeds, so the flag moves layouts that were already close either way. The weights are unpacked for each matmul, which costs about a tenth of the time a chunk takes.
 
 ## Reinforcement learning
 
