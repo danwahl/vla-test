@@ -29,7 +29,7 @@ from lerobot.utils.keyboard_input import init_keyboard_listener
 from hw.robot import FPS, MAX_RELATIVE_TARGET, actions, follower, home, observations
 from hw.spacemouse import SpaceMouse, SpaceMouseConfig
 from sim.agent import ARM_JOINTS, GRIPPER_CLOSED, GRIPPER_OPEN, LIMITS
-from sim.dataset import create
+from sim.dataset import create, finalize
 from sim.env import BLOCK_NAMES, TABLE_TOP_Z, prompt
 from sim.kinematics import HOME_JAW_YAW, HOME_TCP, HOME_TILT, TILT_DOWN, ik
 
@@ -167,7 +167,7 @@ def main():
             if device.is_connected:
                 device.disconnect()
         if dataset is not None:
-            dataset.finalize()
+            finalize(dataset)
 
 
 if __name__ == "__main__":

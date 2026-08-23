@@ -28,6 +28,8 @@ uv run python sim/scripts/collect.py OUT
 
 360 episodes in [LeRobot](https://github.com/huggingface/lerobot) v3.0 format at 10 Hz, 60 for each of the six colour orderings: the five arm joints and the gripper as `observation.state` and `action`, and 480x480 H.264 from the wrist and top cameras. `meta/train_layouts.jsonl` records the spawn and the opening pose each episode started from, and `meta/eval_layouts.jsonl` 150 more, held out, to measure a policy on. Both are what `reset` takes back, so an eval sets off from where a demonstration did.
 
+`meta/stats.json` gives `observation.state` and `action` the arm's joint travel as their normalization range. pi0.5 spells the state out in its prompt as one of 256 bins across that range and does not clip, so a range drawn from the demonstrations alone would read every pose outside them as the same bin.
+
 ## Fine-tuning
 
 `train/pi05_so101_lora_backbone.yaml` is the recipe: LoRA on pi0.5's gemma_2b language backbone, the action expert and the projection heads dense, SigLIP frozen.

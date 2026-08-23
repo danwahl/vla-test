@@ -26,7 +26,7 @@ from hw.oracle import LAYOUTS, planner
 from hw.overlay import serve
 from hw.robot import FPS, PARK_QPOS, actions, follower, home, observations, walk_to
 from sim.agent import JOINT_NAMES
-from sim.dataset import create
+from sim.dataset import create, finalize
 
 
 def replay(robot, commands, dataset, task):
@@ -101,7 +101,7 @@ def main():
         robot.disconnect()
         # Where the parquet footers are written, so the episodes a run did record stay
         # readable when it is stopped part way through a list of layouts.
-        dataset.finalize()
+        finalize(dataset)
 
 
 if __name__ == "__main__":

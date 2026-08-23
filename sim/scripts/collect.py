@@ -20,7 +20,7 @@ import numpy as np
 import torch
 
 import sim  # noqa: F401  (registers the env)
-from sim.dataset import CAMERAS, create
+from sim.dataset import CAMERAS, create, finalize
 from sim.env import PAIRS, prompt, write_layouts
 from sim.oracle import Oracle
 
@@ -137,7 +137,7 @@ def main():
                           dataset, quota)
         seed += 1_000
     render_env.close()
-    dataset.finalize()
+    finalize(dataset)
 
     # Carrying on from the seed the loop reached keeps the held-out spawns off the train
     # ones. They cycle through the pairs, so a truncated eval still covers all six.

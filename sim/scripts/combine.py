@@ -20,7 +20,7 @@ from pathlib import Path
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-from sim.dataset import CAMERAS, create
+from sim.dataset import CAMERAS, create, finalize
 
 
 def episodes(dataset):
@@ -77,7 +77,7 @@ def main():
             print(f"written {repeat}/{args.repeat}, "
                   f"{dataset.meta.total_episodes} episodes so far", flush=True)
     finally:
-        dataset.finalize()
+        finalize(dataset)
     print(f"{dataset.meta.total_episodes} episodes, {dataset.meta.total_frames} frames",
           flush=True)
 
