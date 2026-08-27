@@ -26,9 +26,8 @@ from urllib.parse import parse_qs, urlparse
 import cv2
 import numpy as np
 
-from hw.oracle import LAYOUTS, planner
 from hw.robot import PARK_QPOS, ToSimCameras, follower, home
-from sim.dataset import CAMERAS
+from sim.spec import CAMERAS
 
 FPS = 15
 BOUNDARY = "frame"
@@ -89,17 +88,25 @@ class Console:
         while not stop.is_set():
             if not self.live.wait(timeout=0.2):
                 continue
+            # Ahead of the work rather than after it, so a frame this thread gives up on
+            # costs the same wait as one it composes.
+            time.sleep(1 / FPS)
             with self.lock:
                 blend, edges, camera, views = (self.blend, self.edges, self.camera,
                                                self.views)
-            frame = {camera: self.robot.cameras[camera].read_latest()}
+            try:
+                frame = {camera: self.robot.cameras[camera].read_latest()}
+            except (OSError, RuntimeError):
+                # A camera that has stalled, or re-enumerated onto another device number,
+                # holds the stream on its last frame, which shows as a freeze. Both arrive
+                # as `OSError`, a stale one through `TimeoutError`.
+                continue
             frame = compose(None if views is None else views[camera],
                             self.to_sim.observation(frame)[camera], blend, edges)
             ok, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
             if ok:
                 with self.lock:
                     self.jpeg, self.frame = buffer.tobytes(), frame
-            time.sleep(1 / FPS)
 
     def say(self, note):
         """Put a line of status on the page."""
@@ -118,6 +125,19 @@ class Console:
                 answer = self.answer
         self.live.clear()
         return answer == "ready"
+
+    @contextmanager
+    def watch(self):
+        """Compose the stream while the caller has the arm, so the operator sees it move.
+
+        Composing costs a remap and an encode on the caller's clock, which is why `place`
+        clears it.
+        """
+        self.live.set()
+        try:
+            yield
+        finally:
+            self.live.clear()
 
 
 def compose(sim_view, live, blend, edges):
@@ -231,6 +251,10 @@ def serve(robot, out, port):
 
 
 def main():
+    # Imported here rather than at the top because it reaches the simulator, and the
+    # console itself runs anywhere the cameras do.
+    from hw.oracle import LAYOUTS, planner
+
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--layouts", type=Path, default=LAYOUTS)

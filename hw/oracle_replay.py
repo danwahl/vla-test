@@ -24,9 +24,9 @@ from lerobot.utils.feature_utils import build_dataset_frame
 
 from hw.oracle import LAYOUTS, planner
 from hw.overlay import serve
-from hw.robot import FPS, PARK_QPOS, actions, follower, home, observations, walk_to
-from sim.agent import JOINT_NAMES
+from hw.robot import FPS, PARK_QPOS, actions, follower, home, observations, pick, walk_to
 from sim.dataset import create, finalize
+from sim.spec import JOINT_NAMES
 
 
 def replay(robot, commands, dataset, task):
@@ -35,12 +35,12 @@ def replay(robot, commands, dataset, task):
     An episode is one frame per command at the sim's rate, so that is what the dataset
     gets.
 
-    Returns the narrowest the jaw reached, in the follower's own gripper units. The close
-    is the only place in an episode where it stops short, so that number says whether a
-    block was between the jaws.
+    Returns the narrowest the jaw reached over the close ``pick`` finds, in the follower's
+    own gripper units. A block between the jaws stops them short of the commanded close, so
+    that number says whether one was there.
     """
     to_sim, to_robot = observations(), actions()
-    held, jaw = None, np.inf
+    held, jaw = None, []
     for command in commands:
         step = dict(zip(JOINT_NAMES, command, strict=True))
         observation = to_sim(robot.get_observation())
@@ -49,13 +49,16 @@ def replay(robot, commands, dataset, task):
             **build_dataset_frame(dataset.features, step, prefix=ACTION),
             "task": task,
         })
-        jaw = min(jaw, observation["gripper"])
+        jaw.append(observation["gripper"])
         if held is None:
             held = np.array([observation[joint] for joint in JOINT_NAMES])
         walk_to(robot, to_robot, held, command, observation)
         held = command
     dataset.save_episode()
-    return float(np.rad2deg(jaw))
+    # Each reading is taken before that step's command goes out, so a command shows in
+    # the reading after it.
+    return float(np.rad2deg(min(jaw[1:][pick(commands[:, JOINT_NAMES.index("gripper")])],
+                                default=np.nan)))
 
 
 def main():
@@ -92,7 +95,7 @@ def main():
                 # the arm reaches over the blocks from a pose whose clearance is known
                 # rather than from wherever it was parked.
                 home(robot)
-                home(robot, laid_out.commands[0])
+                home(robot, laid_out.start)
                 jaw = replay(robot, laid_out.commands, dataset, laid_out.prompt)
                 home(robot, PARK_QPOS)
                 console.say(f"{where}: jaw closed to {jaw:.1f}")

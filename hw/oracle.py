@@ -16,15 +16,15 @@ import gymnasium as gym
 import numpy as np
 import torch
 
-import sim  # noqa: F401  (registers the env)
+import sim.env  # noqa: F401  (registers the env)
 from hw.robot import PARK_QPOS
-from sim.dataset import CAMERAS
 from sim.oracle import Oracle
+from sim.spec import CAMERAS
 
 # The spawns the sim demonstrations were collected on, which is where hardware layouts are
 # drawn from too: the held-out set beside it is what a policy trained on either is scored
 # against.
-LAYOUTS = Path("/data/datasets/so101_block_stack_sim/meta/train_layouts.jsonl")
+LAYOUTS = Path("/data/datasets/so101_block_stack_sim_v2/meta/train_layouts.jsonl")
 
 
 @dataclass
@@ -35,9 +35,10 @@ class Plan:
     # than at the pose the episode starts from, so its outline is one more thing the
     # operator can see the overlay agreeing on.
     views: dict[str, np.ndarray]
-    # The commanded joint positions, one row per control step, in radians. An episode
-    # begins wherever the oracle's previous cycle could have left the arm, so the first row
-    # is somewhere over the table rather than at rest.
+    # The pose the layout opens in: mid-cycle over the table, not the rest pose. The
+    # hardware episode starts here, where its sim counterpart starts.
+    start: np.ndarray
+    # The commanded joint positions, one row per control step, in radians.
     commands: np.ndarray
     # Whether the oracle stacked it in sim. A layout that fails there is not worth
     # carrying to the table.
@@ -64,16 +65,17 @@ def parked(env):
 def plan(env, index):
     """Run the oracle on layout ``index`` and keep what it commanded."""
     env.reset(options={"episode_id": torch.tensor([index])})
+    start = env.agent.robot.get_qpos()[0].cpu().numpy()
     views = parked(env)
 
     # The layout carries the pose it opens in, so planning it twice plans the same
-    # trajectory and the arm and the simulator set off from the same place.
+    # trajectory.
     oracle = Oracle(env)
     commands = []
     oracle.run(env.held, env.target,
                on_step=lambda _: commands.append(oracle.command[0].cpu().numpy()))
 
-    return Plan(prompt=env.prompts()[0], views=views,
+    return Plan(prompt=env.prompts()[0], views=views, start=start,
                 commands=np.array(commands, np.float32),
                 stacked=bool(env.evaluate()["success"][0]))
 

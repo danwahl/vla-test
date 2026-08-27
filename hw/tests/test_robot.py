@@ -1,8 +1,15 @@
 import numpy as np
 
-from hw.robot import actions, observations
-from sim.agent import HOME_QPOS, JOINT_NAMES
-from sim.env import IMAGE_SIZE
+from hw.robot import actions, observations, pick, picks
+from sim.spec import (
+    GRIPPER_CLOSED,
+    GRIPPER_OPEN,
+    HOME_QPOS,
+    IMAGE_SIZE,
+    JOINT_NAMES,
+)
+
+OPEN, SHUT = GRIPPER_OPEN, GRIPPER_CLOSED
 
 
 def follower_observation(qpos):
@@ -28,3 +35,47 @@ def test_cameras_land_on_the_sim_pinhole():
         # A flat frame comes through flat, including the rows the wrist lens reprojects
         # from off the sensor, which `BORDER_REPLICATE` fills from the edge.
         assert observation[camera].min() == observation[camera].max() == 40
+
+def test_pick_is_the_first_close():
+    assert pick([OPEN] * 3 + [SHUT] * 4 + [OPEN] * 2) == slice(3, 7)
+
+
+def test_pick_skips_a_jaw_that_starts_shut():
+    """An episode opening mid-cycle holds a closed jaw before it ever reaches a block."""
+    assert pick([SHUT] * 3 + [OPEN] * 2 + [SHUT] * 4 + [OPEN]) == slice(5, 9)
+
+
+def test_pick_starts_where_a_ramp_crosses_the_midpoint():
+    # The middle sample lands exactly on `HALF_SHUT`, which counts as closing.
+    assert pick([OPEN, *np.linspace(OPEN, SHUT, 5), SHUT]) == slice(3, 7)
+
+
+def test_pick_runs_to_the_end_when_the_jaw_never_reopens():
+    assert pick([OPEN, SHUT, SHUT]) == slice(1, 3)
+
+
+def test_pick_is_empty_without_a_close():
+    assert pick([OPEN] * 3) == slice(0, 0)
+
+
+def test_pick_is_empty_without_an_open():
+    assert pick([SHUT] * 3) == slice(0, 0)
+
+
+def test_picks_finds_every_close():
+    """A missed grasp is followed by another go, and the second one is the grasp."""
+    jaw = [OPEN] * 2 + [SHUT] * 2 + [OPEN] * 3 + [SHUT] * 2 + [OPEN]
+    assert list(picks(jaw)) == [slice(2, 4), slice(7, 9)]
+
+
+def test_picks_gives_the_one_close_of_a_single_cycle():
+    jaw = [OPEN] * 3 + [SHUT] * 4 + [OPEN] * 2
+    assert list(picks(jaw)) == [pick(jaw)]
+
+
+def test_picks_is_empty_without_a_close():
+    assert list(picks([OPEN] * 3)) == []
+
+
+def test_picks_ends_on_a_close_that_never_reopens():
+    assert list(picks([OPEN, SHUT, OPEN, SHUT, SHUT])) == [slice(1, 2), slice(3, 5)]

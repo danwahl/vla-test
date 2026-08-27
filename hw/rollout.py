@@ -1,6 +1,7 @@
 """Roll a policy out on the arm.
 
-    uv run python -m hw.rollout CHECKPOINT --held red --target blue
+    uv run python -m hw.rollout CHECKPOINT --indices 0 1 2
+    uv run python -m hw.rollout CHECKPOINT --freehand --steps 1000 --held red --target blue
 
 The policy reads the arm's own cameras and joint positions and its commands go to the bus.
 Chunks are stitched with Real-Time Chunking the way `sim/scripts/eval.py` executes them,
@@ -10,9 +11,15 @@ Denoising the next chunk takes long enough to see, so the arm runs on the chunk 
 already has while that happens. RTC is told how many steps that will take and returns a
 chunk beginning with the ones executed meanwhile, which is what makes the two join.
 
-The console gates each episode: put the blocks anywhere on the table and press the button.
-Whether it stacked is a call for whoever is standing there. What the arm reports is how
-far the jaw closed, which says whether a block was in it.
+Each layout is planned in sim first, so the console shows where its blocks belong and the
+arm can be put in the pose that layout opens in. Those two are the state the sim eval hands
+the same policy, so a score here reads against the score there.
+
+``--freehand`` takes the blocks wherever they are put and opens from the rest pose. It
+reaches nothing in the sim package, so it runs on a machine with no simulator installed.
+
+Whether it stacked is a call for whoever is standing there. What the arm reports is how far
+the jaw closed, which says whether a block was in it.
 """
 
 from __future__ import annotations
@@ -20,20 +27,17 @@ from __future__ import annotations
 import argparse
 import threading
 import time
+from functools import partial
 from pathlib import Path
 
-import gymnasium as gym
 import numpy as np
 import torch
 from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
 
-import sim  # noqa: F401  (registers the env, for the episode length)
 from hw.overlay import serve
-from hw.robot import FPS, PARK_QPOS, actions, follower, home, observations, walk_to
-from sim.agent import JOINT_NAMES
-from sim.dataset import CAMERAS
-from sim.env import BLOCK_NAMES, prompt
+from hw.robot import FPS, PARK_QPOS, actions, follower, home, observations, picks, walk_to
 from sim.policy import load_policy
+from sim.spec import BLOCK_NAMES, CAMERAS, HOME_QPOS, JOINT_NAMES, prompt
 
 
 def observation(frame, task):
@@ -77,12 +81,14 @@ def rollout(robot, policy, preprocessor, postprocessor, task, steps, horizon):
     first replan has no chunk to run on and no prefix to agree with, so it stands still for
     one denoising pass.
 
-    Returns the narrowest the jaw reached, in the follower's own gripper units. It is read
-    once per chunk rather than per step, which is enough: once the jaw has closed on a
-    block it stays there.
+    Returns how far the jaw closed on the best of the episode's grasps, in the follower's
+    own gripper units: the narrowest reading inside each close, and the widest of those
+    across closes, since a long episode lets the policy try again after a miss. Both widths
+    are sampled once per chunk, which is enough: a close spans several chunks.
     """
     to_sim, to_robot = observations(), actions()
-    held, jaw, delay = None, np.inf, 0
+    held, delay = None, 0
+    commanded, reached = [], []
     leftover, commands = None, ()
 
     def drive(command, frame):
@@ -92,9 +98,12 @@ def rollout(robot, policy, preprocessor, postprocessor, task, steps, horizon):
 
     for _ in range(0, steps, horizon):
         frame = to_sim(robot.get_observation())
-        jaw = min(jaw, frame["gripper"])
         if held is None:
             held = np.array([frame[joint] for joint in JOINT_NAMES])
+        # Each reading is taken before that step's command goes out, so a command shows
+        # in the reading after it.
+        commanded.append(held[JOINT_NAMES.index("gripper")])
+        reached.append(frame["gripper"])
 
         replan = Replan(policy, preprocessor(observation(frame, task)), leftover, delay,
                         horizon)
@@ -111,48 +120,100 @@ def rollout(robot, policy, preprocessor, postprocessor, task, steps, horizon):
         # the time that chunk arrives.
         commands = commands[horizon:]
         delay = min(int(np.ceil(replan.took * FPS)), horizon - 1, len(commands))
-    return float(np.rad2deg(jaw))
+    return float(np.rad2deg(max((min(reached[window]) for window in picks(commanded)),
+                                default=np.nan)))
+
+
+def episode(robot, console, policy, preprocessor, postprocessor, where, task, views,
+            start, steps, horizon):
+    """Hold for the blocks, drive the policy, and park. ``None`` if the console skips it."""
+    if not console.place(views, f"{where}: {task}"):
+        return None
+    console.say(f"{where}: running")
+    with console.watch():
+        # Via the rest pose, so the travel to the opening pose runs through a pose with
+        # known clearance over the blocks.
+        home(robot)
+        home(robot, start)
+        jaw = rollout(robot, policy, preprocessor, postprocessor, task, steps, horizon)
+        home(robot, PARK_QPOS)
+    console.say(f"{where}: jaw closed to {jaw:.1f}")
+    return jaw
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("checkpoint", type=Path)
-    parser.add_argument("--held", choices=BLOCK_NAMES, default=BLOCK_NAMES[0])
-    parser.add_argument("--target", choices=BLOCK_NAMES, default=BLOCK_NAMES[1])
-    parser.add_argument("--episodes", type=int, default=10)
+    parser.add_argument("--layouts", type=Path,
+                        help="default: the held-out layouts beside the demonstrations")
+    parser.add_argument("--indices", type=int, nargs="+", default=[0])
+    parser.add_argument("--freehand", action="store_true",
+                        help="blocks anywhere on the table, opening from rest")
+    parser.add_argument("--held", choices=BLOCK_NAMES, default=BLOCK_NAMES[0],
+                        help="freehand only")
+    parser.add_argument("--target", choices=BLOCK_NAMES, default=BLOCK_NAMES[1],
+                        help="freehand only")
+    parser.add_argument("--episodes", type=int, default=6, help="freehand only")
     parser.add_argument("--dataset", type=Path,
-                        default=Path("/data/datasets/so101_block_stack_sim"))
-    parser.add_argument("--repo-id", default="vla-test/so101_block_stack_sim")
+                        default=Path("/data/datasets/so101_block_stack_sim_v2"))
+    parser.add_argument("--repo-id", default="vla-test/so101_block_stack_sim_v2")
     parser.add_argument("--horizon", type=int, default=20, help="steps executed per chunk")
+    # A cycle can be run from wherever the last one left the arm, so an episode longer than
+    # the sim limit is one that lets the policy have another go at a pick it missed.
+    parser.add_argument("--steps", type=int, help="default: the sim episode limit")
     parser.add_argument("--no-rtc", action="store_true", help="denoise each chunk on its own")
+    parser.add_argument("--int8", action="store_true",
+                        help="hold the backbone and vision tower as int8")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--out", type=Path, default=Path("."))
     args = parser.parse_args()
 
-    task = prompt(BLOCK_NAMES.index(args.held), BLOCK_NAMES.index(args.target))
-    steps = gym.spec("SO101BlockStack-v1").max_episode_steps
+    steps = args.steps
+    if steps is None:
+        if args.freehand:
+            parser.error("--freehand needs --steps: the default limit comes from the sim env")
+        import gymnasium as gym
+
+        import sim.env  # noqa: F401  (registers the env, for the episode length)
+        steps = gym.spec("SO101BlockStack-v1").max_episode_steps
+
     policy, preprocessor, postprocessor = load_policy(
         args.checkpoint, LeRobotDatasetMetadata(args.repo_id, root=args.dataset),
-        args.horizon, "cuda", rtc=not args.no_rtc)
-    print(f"{task}, {steps} steps an episode", flush=True)
+        args.horizon, "cuda", rtc=not args.no_rtc, int8=args.int8)
+    print(f"{args.checkpoint}, {steps} steps an episode", flush=True)
 
     robot = follower()
     robot.connect()
     try:
         home(robot, PARK_QPOS)
         with serve(robot, args.out, args.port) as console:
-            for episode in range(1, args.episodes + 1):
-                where = f"{episode}/{args.episodes}"
-                if not console.place(None, f"{where}: {task}"):
-                    continue
-                console.say(f"{where}: running")
-                home(robot)
-                jaw = rollout(robot, policy, preprocessor, postprocessor, task, steps,
-                              args.horizon)
-                home(robot, PARK_QPOS)
-                console.say(f"{where}: jaw closed to {jaw:.1f}")
-                print(f"episode {episode}: jaw closed to {jaw:.1f}", flush=True)
+            run = partial(episode, robot, console, policy, preprocessor, postprocessor,
+                          steps=steps, horizon=args.horizon)
+            if args.freehand:
+                task = prompt(BLOCK_NAMES.index(args.held), BLOCK_NAMES.index(args.target))
+                for number in range(1, args.episodes + 1):
+                    where = f"{number}/{args.episodes}"
+                    jaw = run(where=where, task=task, views=None, start=HOME_QPOS)
+                    if jaw is not None:
+                        print(f"episode {number}: jaw closed to {jaw:.1f}", flush=True)
+                return
+
+            # Imported here rather than at the top because it reaches the simulator,
+            # which the freehand path above runs without.
+            from hw.oracle import LAYOUTS, planner
+            with planner(args.layouts or LAYOUTS.with_name("eval_layouts.jsonl")) as plan:
+                for number, index in enumerate(args.indices, 1):
+                    where = f"{number}/{len(args.indices)}  layout {index}"
+                    console.say(f"{where}: planning")
+                    laid_out = plan(index)
+                    misses = "" if laid_out.stacked else ", which the oracle misses in sim"
+                    print(f"layout {index}: {laid_out.prompt}{misses}", flush=True)
+
+                    jaw = run(where=where, task=laid_out.prompt, views=laid_out.views,
+                              start=laid_out.start)
+                    if jaw is not None:
+                        print(f"layout {index}: jaw closed to {jaw:.1f}", flush=True)
     finally:
         robot.disconnect()
 

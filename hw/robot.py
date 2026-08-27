@@ -31,7 +31,14 @@ from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
 from lerobot.types import RobotAction, RobotObservation
 from lerobot.utils.robot_utils import precise_sleep
 
-from sim.spec import GRIPPER_OPEN, HOME_QPOS, IMAGE_SIZE, JOINT_NAMES, K_SIM
+from sim.spec import (
+    GRIPPER_CLOSED,
+    GRIPPER_OPEN,
+    HOME_QPOS,
+    IMAGE_SIZE,
+    JOINT_NAMES,
+    K_SIM,
+)
 
 CALIBRATION = Path(__file__).parent / "calibration"
 
@@ -209,3 +216,42 @@ def home(robot, qpos=HOME_QPOS, seconds=3.0):
         robot.send_action({f"{joint}.pos": float(value)
                            for joint, value in zip(JOINT_NAMES, blend, strict=True)})
 
+
+# Midway between the two widths the jaws are ever asked for. A command eases between them
+# over several steps, so the width passes through this value rather than resting on it.
+HALF_SHUT = (GRIPPER_OPEN + GRIPPER_CLOSED) / 2
+
+
+def pick(jaw):
+    """The steps spanning the first close in a commanded ``jaw`` width, where a block is grasped.
+
+    An episode opens wherever the previous cycle left the arm, so half of them open with the
+    jaw already shut on nothing, a pose narrower than any grasp. What the arm reached over
+    this window is what says whether a block was between the fingers.
+    """
+    jaw = np.asarray(jaw)
+    opened = np.flatnonzero(jaw > HALF_SHUT)
+    shut = np.flatnonzero(jaw <= HALF_SHUT)
+    if not len(opened):
+        return slice(0, 0)
+    closes = shut[shut > opened[0]]
+    if not len(closes):
+        return slice(0, 0)
+    reopens = opened[opened > closes[0]]
+    return slice(closes[0], reopens[0] if len(reopens) else len(jaw))
+
+
+def picks(jaw):
+    """Every close in a commanded ``jaw`` width, in order.
+
+    An episode long enough for the policy to try again after a missed grasp holds more
+    than one, and what the arm reached on its best attempt is what says whether it ever
+    had a block.
+    """
+    jaw, at = np.asarray(jaw), 0
+    while at < len(jaw):
+        window = pick(jaw[at:])
+        if window.start == window.stop:
+            return
+        yield slice(at + window.start, at + window.stop)
+        at += window.stop
