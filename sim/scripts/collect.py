@@ -19,10 +19,11 @@ import gymnasium as gym
 import numpy as np
 import torch
 
-import sim  # noqa: F401  (registers the env)
-from sim.dataset import CAMERAS, create, finalize
-from sim.env import PAIRS, prompt, write_layouts
+import sim.env  # noqa: F401  (registers the env)
+from sim.dataset import create, finalize
+from sim.env import PAIRS, write_layouts
 from sim.oracle import Oracle
+from sim.spec import CAMERAS, prompt
 
 
 def screen(env, need, seed):

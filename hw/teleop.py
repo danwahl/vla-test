@@ -28,10 +28,11 @@ from lerobot.utils.keyboard_input import init_keyboard_listener
 
 from hw.robot import FPS, MAX_RELATIVE_TARGET, actions, follower, home, observations
 from hw.spacemouse import SpaceMouse, SpaceMouseConfig
-from sim.agent import ARM_JOINTS, GRIPPER_CLOSED, GRIPPER_OPEN, LIMITS
+from sim.agent import LIMITS
 from sim.dataset import create, finalize
-from sim.env import BLOCK_NAMES, TABLE_TOP_Z, prompt
+from sim.env import TABLE_TOP_Z
 from sim.kinematics import HOME_JAW_YAW, HOME_TCP, HOME_TILT, TILT_DOWN, ik
+from sim.spec import ARM_JOINTS, BLOCK_NAMES, GRIPPER_CLOSED, GRIPPER_OPEN, prompt
 
 # Where the tool may go: over the table, clear of its top, and inside the arm's reach.
 # The home pose sits at the far end of the x range.

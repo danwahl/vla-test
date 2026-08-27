@@ -6,7 +6,7 @@ from pathlib import Path
 import gymnasium as gym
 from PIL import Image
 
-import sim  # noqa: F401  (registers the env)
+import sim.env  # noqa: F401  (registers the env)
 
 out = Path(sys.argv[1] if len(sys.argv) > 1 else "/tmp/so101")
 out.mkdir(parents=True, exist_ok=True)

@@ -2,10 +2,10 @@ import gymnasium as gym
 import numpy as np
 import torch
 
-import sim  # noqa: F401  (registers the env)
-from sim.agent import HOME_QPOS
-from sim.env import HOLD_REWARD, IMAGE_SIZE, read_layouts, write_layouts
+import sim.env  # noqa: F401  (registers the env)
+from sim.env import HOLD_REWARD, read_layouts, write_layouts
 from sim.oracle import Oracle
+from sim.spec import HOME_QPOS, IMAGE_SIZE
 
 
 def test_env_resets_steps_and_renders_both_cameras():

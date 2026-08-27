@@ -13,18 +13,9 @@ from mani_skill.agents.base_agent import BaseAgent, Keyframe
 from mani_skill.agents.controllers import PDJointPosControllerConfig
 from mani_skill.agents.registration import register_agent
 
-ARM_JOINTS = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll"]
-JOINT_NAMES = [*ARM_JOINTS, "gripper"]
-
-# One width for open and one for closed, so a policy reads a single unambiguous pair. The
-# jaw faces stand 57 mm apart open and 22 mm apart closed, either side of the 30 mm block.
-GRIPPER_OPEN = 0.6
-GRIPPER_CLOSED = 0.09
+from .spec import ARM_JOINTS, HOME_QPOS, JOINT_NAMES
 
 BASE_POSE = sapien.Pose(p=[0.0, 0.0, 0.74])
-
-# The arm folded back over its own base, the physical SO-101's rest pose.
-HOME_QPOS = np.array([-0.1414, 0.3624, -1.1317, 1.5485, -0.0915, GRIPPER_OPEN], np.float32)
 
 URDF_PATH = Path(__file__).parent / "description" / "so101.urdf"
 

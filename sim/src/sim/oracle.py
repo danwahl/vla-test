@@ -18,9 +18,9 @@ import math
 
 import torch
 
-from .agent import GRIPPER_CLOSED, GRIPPER_OPEN, HOME_QPOS
 from .env import BLOCK_REST_Z, BLOCK_SIDE, SPAWN_X, SPAWN_Y
 from .kinematics import ik, ik_clearance, ik_straight_up
+from .spec import GRIPPER_CLOSED, GRIPPER_OPEN, HOME_QPOS
 
 GRASP_DZ = -0.003        # clamp just below the block centre so the jaw tips clear the table
 GRASP_LATERAL = 0.020    # along the jaw axis, seating the block against the fixed jaw

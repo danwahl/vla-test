@@ -18,11 +18,7 @@ from mani_skill.utils.structs.pose import Pose
 from mani_skill.utils.structs.types import SimConfig
 
 from .agent import BASE_POSE, HOME_QPOS, SO101  # noqa: F401  (import registers the agent)
-
-# Ideal pinhole fitted to the physical InnoMaker U20CAM, as a 480x480 centre crop of the
-# 640x480 calibration: same rays, so f and cy are unchanged and cx drops by (640-480)/2.
-IMAGE_SIZE = 480
-K_SIM = np.array([[546.0, 0.0, 240.0], [0.0, 546.0, 240.0], [0.0, 0.0, 1.0]], np.float32)
+from .spec import BLOCK_NAMES, IMAGE_SIZE, K_SIM, prompt
 
 # The URDF's optical-frame links are OpenCV-style (+Z out of the lens); SAPIEN cameras
 # are ROS-style (+X out of the lens). Columns are the camera axes in link coordinates.
@@ -44,7 +40,6 @@ BLOCK_COLOURS = {
     "green": (0.10, 0.65, 0.15, 1.0),
     "blue": (0.10, 0.20, 0.85, 1.0),
 }
-BLOCK_NAMES = tuple(BLOCK_COLOURS)
 # The ordered pairs of distinct blocks the task can name.
 PAIRS = [(held, target) for held in range(3) for target in range(3) if held != target]
 # Spawn box, inside the arm's top-down reach at both grasp and stack height. The
@@ -67,12 +62,6 @@ DISTURB_TOL = 0.015
 # What a step of holding the stack is worth, against a point for first seating it. Set so
 # that holding it for the rest of the episode is worth about as much as seating it.
 HOLD_REWARD = 0.005
-
-TASK_PROMPT = "stack the {held} block on the {target} block"
-
-
-def prompt(held, target):
-    return TASK_PROMPT.format(held=BLOCK_NAMES[held], target=BLOCK_NAMES[target])
 
 
 def write_layouts(path, layouts, key):

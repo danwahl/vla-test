@@ -20,11 +20,9 @@ import torch
 from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
 from mani_skill.utils.visualization.misc import images_to_video, tile_images
 
-import sim  # noqa: F401  (registers the env)
-from sim.agent import HOME_QPOS
-from sim.dataset import CAMERAS
-from sim.env import BLOCK_NAMES
+import sim.env  # noqa: F401  (registers the env)
 from sim.policy import load_policy
+from sim.spec import BLOCK_NAMES, CAMERAS, HOME_QPOS
 
 
 def observation(obs, tasks):

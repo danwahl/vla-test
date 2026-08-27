@@ -1,7 +1,7 @@
 """The physical SO-101, presented the way the simulator presents it.
 
 A policy trained in sim reads radians, bare joint names and 480x480 frames on the pinhole
-`sim.env.K_SIM`. The follower reports degrees, `<joint>.pos` names and whatever its lens
+`sim.spec.K_SIM`. The follower reports degrees, `<joint>.pos` names and whatever its lens
 does. The processor steps here sit either side of `lerobot`'s record loop and close that
 gap, so a hardware episode lands in the same schema `sim/scripts/collect.py` writes.
 """
@@ -31,8 +31,7 @@ from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
 from lerobot.types import RobotAction, RobotObservation
 from lerobot.utils.robot_utils import precise_sleep
 
-from sim.agent import GRIPPER_OPEN, HOME_QPOS, JOINT_NAMES
-from sim.env import IMAGE_SIZE, K_SIM
+from sim.spec import GRIPPER_OPEN, HOME_QPOS, IMAGE_SIZE, JOINT_NAMES, K_SIM
 
 CALIBRATION = Path(__file__).parent / "calibration"
 
@@ -209,3 +208,4 @@ def home(robot, qpos=HOME_QPOS, seconds=3.0):
                        _ramp(goal, goal, int(SETTLE_SECONDS * COMMAND_HZ))):
         robot.send_action({f"{joint}.pos": float(value)
                            for joint, value in zip(JOINT_NAMES, blend, strict=True)})
+

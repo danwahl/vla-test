@@ -2,9 +2,9 @@ import gymnasium as gym
 import numpy as np
 import torch
 
-import sim  # noqa: F401  (registers the env)
-from sim.agent import HOME_QPOS
+import sim.env  # noqa: F401  (registers the env)
 from sim.kinematics import HOME_JAW_YAW, HOME_TCP, HOME_TILT, TILT_DOWN, ik
+from sim.spec import HOME_QPOS
 
 
 def _tcp(env, q):

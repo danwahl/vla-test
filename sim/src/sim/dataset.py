@@ -11,10 +11,8 @@ import json
 from lerobot.configs.video import RGBEncoderConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-from .agent import JOINT_NAMES, LIMITS
-from .env import IMAGE_SIZE
-
-CAMERAS = ("top", "wrist")
+from .agent import LIMITS
+from .spec import CAMERAS, IMAGE_SIZE, JOINT_NAMES
 
 FEATURES = {
     "observation.state": {"dtype": "float32", "shape": (len(JOINT_NAMES),),

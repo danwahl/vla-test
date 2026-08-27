@@ -18,9 +18,10 @@ import gymnasium as gym
 import numpy as np
 import torch
 
-import sim  # noqa: F401  (registers the env)
-from sim.env import BLOCK_NAMES, PAIRS, write_layouts
+import sim.env  # noqa: F401  (registers the env)
+from sim.env import PAIRS, write_layouts
 from sim.oracle import Oracle
+from sim.spec import BLOCK_NAMES
 
 
 def main():

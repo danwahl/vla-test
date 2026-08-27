@@ -2,7 +2,7 @@ import numpy as np
 
 from hw.robot import MAX_RELATIVE_TARGET
 from hw.teleop import BOUNDS, LIMITS, TILT_RANGE, SpaceMouseToJoints, solve, start_qpos
-from sim.agent import JOINT_NAMES
+from sim.spec import JOINT_NAMES
 
 CHANNELS = ("dx", "dy", "dz", "d_tilt", "d_yaw", "gripper")
 
