@@ -20,7 +20,8 @@ from pathlib import Path
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-from sim.dataset import CAMERAS, create, finalize
+from sim.dataset import create, finalize
+from sim.spec import CAMERAS
 
 
 def episodes(dataset):
@@ -48,18 +49,18 @@ def main():
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("out", type=Path)
     parser.add_argument("--sim", type=Path,
-                        default=Path("/data/datasets/so101_block_stack_sim"))
+                        default=Path("/data/datasets/so101_block_stack_sim_v2"))
     parser.add_argument("--hw", type=Path,
-                        default=Path("/data/datasets/so101_block_stack_hw"))
-    parser.add_argument("--repeat", type=int, default=8,
+                        default=Path("/data/datasets/so101_block_stack_hw_v2"))
+    parser.add_argument("--repeat", type=int, default=3,
                         help="times the hardware set is written")
-    parser.add_argument("--repo-id", default="vla-test/so101_block_stack_mix")
+    parser.add_argument("--repo-id", default="vla-test/so101_block_stack_mix_v2")
     args = parser.parse_args()
 
     # `return_uint8` hands back the frames as they were stored, so a repeat is a decode and
-    # an encode rather than a trip through float.
-    hardware = LeRobotDataset("vla-test/so101_block_stack_hw", root=args.hw,
-                              return_uint8=True)
+    # an encode rather than a trip through float. A dataset on disk carries no repo id of
+    # its own, so `--hw` supplies both the path and the name.
+    hardware = LeRobotDataset(f"vla-test/{args.hw.name}", root=args.hw, return_uint8=True)
     print(f"{hardware.meta.total_episodes} hardware episodes, "
           f"{hardware.meta.total_frames} frames, written {args.repeat} times", flush=True)
     demonstrations = episodes(hardware)
