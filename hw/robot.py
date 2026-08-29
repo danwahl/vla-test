@@ -50,8 +50,8 @@ FOLLOWER_ID = "so101_follower"
 # opens a device by number rather than by name, so the port is resolved to one on the way
 # in. A camera moved to a different port needs its line here changed to match.
 BY_PATH = Path("/dev/v4l/by-path")
-CAMERA_PORT = {"top": "pci-0000:0e:00.0-usb-0:4.4:1.0-video-index0",
-               "wrist": "pci-0000:0e:00.0-usb-0:4.1:1.0-video-index0"}
+CAMERA_PORT = {"top": "pci-0000:0e:00.0-usb-0:4.3:1.0-video-index0",
+               "wrist": "pci-0000:0e:00.0-usb-0:4.2:1.0-video-index0"}
 
 # The rate the sim env runs its controller at, so a replayed trajectory keeps its timing.
 FPS = 10
