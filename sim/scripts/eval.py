@@ -5,6 +5,10 @@
 Chunks are stitched with Real-Time Chunking: each one is guided onto the tail of the
 chunk it replaces. ``--no-rtc`` denoises each chunk on its own instead, which is how the
 RL rollout executes them.
+
+Each chunk rides a cubic through a few of its own steps before it is executed, which holds
+the motion and drops the step-to-step wobble the policy writes on top of it. ``--no-smooth``
+executes the chunk as it arrives.
 """
 
 from __future__ import annotations
@@ -21,7 +25,7 @@ from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
 from mani_skill.utils.visualization.misc import images_to_video, tile_images
 
 import sim.env  # noqa: F401  (registers the env)
-from sim.policy import load_policy
+from sim.policy import load_policy, smooth
 from sim.spec import BLOCK_NAMES, CAMERAS, HOME_QPOS
 
 
@@ -36,14 +40,16 @@ def observation(obs, tasks):
     }
 
 
-def rollout(env, policy, preprocessor, postprocessor, layouts, horizon, steps, frames=None):
+def rollout(env, policy, preprocessor, postprocessor, layouts, horizon, steps,
+            frames=None, smoothing=True):
     """Drive a batch of layouts for ``steps``, replanning every ``horizon``.
 
     A stack is scored the first step it holds, since the arm carries on moving afterwards.
     Passing a ``frames`` list also collects the inspection view, tiled over the batch, from
     the pose the layout opens in.
 
-    Also gives back what each chunk took to denoise.
+    Also gives back what each chunk took to denoise, and the commands themselves, which say
+    how smoothly the arm was driven.
     """
     obs, _ = env.reset(options={"layout": {
         "xy": np.array([[p[:2] for p in item["positions"]] for item in layouts], np.float32),
@@ -62,7 +68,7 @@ def rollout(env, policy, preprocessor, postprocessor, layouts, horizon, steps, f
     if frames is not None:
         snapshot()
 
-    leftover, latencies = None, []
+    leftover, latencies, sent = None, [], []
     for _ in range(0, steps, horizon):
         began = time.perf_counter()
         chunk = policy.predict_action_chunk(
@@ -74,14 +80,20 @@ def rollout(env, policy, preprocessor, postprocessor, layouts, horizon, steps, f
         # The call queues work and returns, so the clock has to wait for the device.
         torch.cuda.synchronize()
         latencies.append(time.perf_counter() - began)
+        # The next chunk is guided onto this one as the policy wrote it, so smoothing
+        # changes what the arm is told and not what the model is asked to agree with.
         leftover = chunk[:, horizon:]
         commands = postprocessor(chunk)
+        if smoothing:
+            commands = smooth(commands)
+        sent.append(commands[:, :horizon].cpu().numpy())
         for step in range(horizon):
             obs, _, success, _, _ = env.step(commands[:, step])
             stacked |= success
             if frames is not None:
                 snapshot()
-    return stacked.cpu().numpy(), env.evaluate()["lifted"].cpu().numpy(), latencies
+    return (stacked.cpu().numpy(), env.evaluate()["lifted"].cpu().numpy(), latencies,
+            np.concatenate(sent, axis=1))
 
 
 def report(results):
@@ -111,6 +123,8 @@ def main():
                         help="default: the dataset's own held-out layouts")
     parser.add_argument("--horizon", type=int, default=20, help="steps executed per chunk")
     parser.add_argument("--no-rtc", action="store_true", help="denoise each chunk on its own")
+    parser.add_argument("--no-smooth", action="store_true",
+                        help="execute each chunk as the policy wrote it")
     parser.add_argument("--int8", action="store_true",
                         help="hold the backbone and vision tower as int8")
     parser.add_argument("--envs", type=int, default=16, help="envs stepped in lockstep")
@@ -139,16 +153,21 @@ def main():
     weights = torch.cuda.memory_allocated() - on_device
     torch.cuda.reset_peak_memory_stats()
 
-    results, latencies = [], []
+    results, latencies, jerks = [], [], []
     for start in range(0, len(layouts), env.num_envs):
         batch = layouts[start:start + env.num_envs]
         padded = batch + [batch[-1]] * (env.num_envs - len(batch))
         frames = [] if args.video else None
-        stacked, lifted, timings = rollout(env, policy, preprocessor, postprocessor, padded,
-                                           args.horizon, steps, frames)
+        stacked, lifted, timings, commands = rollout(
+            env, policy, preprocessor, postprocessor, padded, args.horizon, steps, frames,
+            not args.no_smooth)
         results += [{**item, "stacked": bool(stacked[i]), "lifted": bool(lifted[i])}
                     for i, item in enumerate(batch)]
         latencies += timings
+        # The five arm joints of the layouts this batch actually holds, since a short last
+        # batch is padded by repeating one of them. A jerky rollout shows as a large second
+        # difference here.
+        jerks.append(np.abs(np.diff(commands[:len(batch), :, :5], n=2, axis=1)).mean())
         if frames:
             images_to_video(frames, str(args.video), f"{start:03d}",
                             fps=round(1 / env.control_timestep))
@@ -163,6 +182,7 @@ def main():
     print(f"{weights / 2**30:.2f} GiB of weights, "
           f"{torch.cuda.max_memory_allocated() / 2**30:.2f} GiB peak, "
           f"{1000 * float(np.median(latencies)):.0f} ms per chunk at {args.envs} envs")
+    print(f"second difference {float(np.mean(jerks)):.5f} rad a step in the commands")
 
 
 if __name__ == "__main__":

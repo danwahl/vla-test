@@ -5,7 +5,7 @@
 
 The policy reads the arm's own cameras and joint positions and its commands go to the bus.
 Chunks are stitched with Real-Time Chunking the way `sim/scripts/eval.py` executes them,
-and a chunk runs open loop until the next one replaces it.
+smoothed the same way, and a chunk runs open loop until the next one replaces it.
 
 Denoising the next chunk takes long enough to see, so the arm runs on the chunk it
 already has while that happens. RTC is told how many steps that will take and returns a
@@ -36,7 +36,7 @@ from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
 
 from hw.overlay import serve
 from hw.robot import FPS, PARK_QPOS, actions, follower, home, observations, picks, walk_to
-from sim.policy import load_policy
+from sim.policy import load_policy, smooth
 from sim.spec import BLOCK_NAMES, CAMERAS, HOME_QPOS, JOINT_NAMES, prompt
 
 
@@ -72,7 +72,8 @@ class Replan(threading.Thread):
         self.took = time.perf_counter() - began
 
 
-def rollout(robot, policy, preprocessor, postprocessor, task, steps, horizon):
+def rollout(robot, policy, preprocessor, postprocessor, task, steps, horizon,
+            smoothing=True):
     """Drive the arm for ``steps``, replanning every ``horizon``.
 
     How many steps a replan is given comes from how long the last one took, since that is
@@ -112,8 +113,13 @@ def rollout(robot, policy, preprocessor, postprocessor, task, steps, horizon):
             drive(command, frame)
         replan.join()
 
+        # The next chunk is guided onto this one as the policy wrote it, so smoothing
+        # changes what the arm is told and not what the model is asked to agree with.
         leftover = replan.chunk[:, horizon:]
-        commands = postprocessor(replan.chunk)[0].cpu().numpy()
+        commands = postprocessor(replan.chunk)
+        if smoothing:
+            commands = smooth(commands)
+        commands = commands[0].cpu().numpy()
         for command in commands[delay:horizon]:
             drive(command, frame)
         # What the next chunk will be guided onto, and how much of it will have run by
@@ -125,7 +131,7 @@ def rollout(robot, policy, preprocessor, postprocessor, task, steps, horizon):
 
 
 def episode(robot, console, policy, preprocessor, postprocessor, where, task, views,
-            start, steps, horizon):
+            start, steps, horizon, smoothing):
     """Hold for the blocks, drive the policy, and park. ``None`` if the console skips it."""
     if not console.place(views, f"{where}: {task}"):
         return None
@@ -135,7 +141,8 @@ def episode(robot, console, policy, preprocessor, postprocessor, where, task, vi
         # known clearance over the blocks.
         home(robot)
         home(robot, start)
-        jaw = rollout(robot, policy, preprocessor, postprocessor, task, steps, horizon)
+        jaw = rollout(robot, policy, preprocessor, postprocessor, task, steps, horizon,
+                      smoothing)
         home(robot, PARK_QPOS)
     console.say(f"{where}: jaw closed to {jaw:.1f}")
     return jaw
@@ -163,6 +170,8 @@ def main():
     # the sim limit is one that lets the policy have another go at a pick it missed.
     parser.add_argument("--steps", type=int, help="default: the sim episode limit")
     parser.add_argument("--no-rtc", action="store_true", help="denoise each chunk on its own")
+    parser.add_argument("--no-smooth", action="store_true",
+                        help="execute each chunk as the policy wrote it")
     parser.add_argument("--int8", action="store_true",
                         help="hold the backbone and vision tower as int8")
     parser.add_argument("--port", type=int, default=8000)
@@ -189,7 +198,8 @@ def main():
         home(robot, PARK_QPOS)
         with serve(robot, args.out, args.port) as console:
             run = partial(episode, robot, console, policy, preprocessor, postprocessor,
-                          steps=steps, horizon=args.horizon)
+                          steps=steps, horizon=args.horizon,
+                          smoothing=not args.no_smooth)
             if args.freehand:
                 task = prompt(BLOCK_NAMES.index(args.held), BLOCK_NAMES.index(args.target))
                 for number in range(1, args.episodes + 1):
