@@ -765,7 +765,7 @@
   </link>
   
   <joint name="wrist_camera_frame_fixed_joint" type="fixed">
-    <origin xyz="0.0025 0.072010214 -0.000859294" rpy="-3.577922 -5.55112e-17 0"/>
+    <origin xyz="0.0025 0.072010214 -0.000859294" rpy="2.704208 -0.067216 0.031395"/>
     <parent link="camera_wrist_mount_link"/>
     <child link="wrist_camera_frame_link"/>
     <axis xyz="0 0 0"/>
