@@ -2,33 +2,17 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import ClassVar
-from xml.etree import ElementTree
 
-import numpy as np
 import sapien
 import torch
 from mani_skill.agents.base_agent import BaseAgent, Keyframe
 from mani_skill.agents.controllers import PDJointPosControllerConfig
 from mani_skill.agents.registration import register_agent
 
-from .spec import ARM_JOINTS, HOME_QPOS, JOINT_NAMES
+from .spec import ARM_JOINTS, HOME_QPOS, JOINT_NAMES, URDF_PATH
 
 BASE_POSE = sapien.Pose(p=[0.0, 0.0, 0.74])
-
-URDF_PATH = Path(__file__).parent / "description" / "so101.urdf"
-
-
-def _joint_limits():
-    """Each joint's travel, lower then upper, in the order of ``JOINT_NAMES``."""
-    limits = {joint.get("name"): joint.find("limit")
-              for joint in ElementTree.parse(URDF_PATH).getroot().findall("joint")}
-    return np.array([[float(limits[name].get(edge)) for edge in ("lower", "upper")]
-                     for name in JOINT_NAMES], np.float32)
-
-
-LIMITS = _joint_limits()
 
 _GRIP = {"material": "grip", "patch_radius": 0.1, "min_patch_radius": 0.1}
 

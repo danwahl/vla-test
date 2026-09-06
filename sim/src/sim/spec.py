@@ -1,12 +1,17 @@
 """What the arm, its cameras and the task are, apart from any simulation of them.
 
-The simulator and the physical arm agree on these, and the physical arm reaches them
-without a physics engine installed: nothing here imports one.
+The simulator and the physical arm agree on these, and nothing here imports a physics
+engine, so the hardware package reaches them without one installed.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
+from xml.etree import ElementTree
+
 import numpy as np
+
+URDF_PATH = Path(__file__).parent / "description" / "so101.urdf"
 
 ARM_JOINTS = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll"]
 JOINT_NAMES = [*ARM_JOINTS, "gripper"]
@@ -20,6 +25,17 @@ GRIPPER_CLOSED = 0.09
 HOME_QPOS = np.array([-0.1414, 0.3624, -1.1317, 1.5485, -0.0915, GRIPPER_OPEN], np.float32)
 
 CAMERAS = ("top", "wrist")
+
+
+def _joint_limits():
+    """Each joint's travel, lower then upper, in the order of ``JOINT_NAMES``."""
+    limits = {joint.get("name"): joint.find("limit")
+              for joint in ElementTree.parse(URDF_PATH).getroot().findall("joint")}
+    return np.array([[float(limits[name].get(edge)) for edge in ("lower", "upper")]
+                     for name in JOINT_NAMES], np.float32)
+
+
+LIMITS = _joint_limits()
 
 # Ideal pinhole fitted to the physical InnoMaker U20CAM, as a 480x480 centre crop of the
 # 640x480 calibration: same rays, so f and cy are unchanged and cx drops by (640-480)/2.
