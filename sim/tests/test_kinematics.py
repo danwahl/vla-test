@@ -3,8 +3,7 @@ import numpy as np
 import torch
 
 import sim.env  # noqa: F401  (registers the env)
-from sim.kinematics import HOME_JAW_YAW, HOME_TCP, HOME_TILT, TILT_DOWN, ik
-from sim.spec import HOME_QPOS
+from sim.kinematics import TILT_DOWN, ik
 
 
 def _tcp(env, q):
@@ -44,20 +43,4 @@ def test_ik_round_trips_through_sapien_fk():
     assert ok.all()
     p_tilt, _ = _tcp(env, torch.cat([q_tilt.float(), torch.full((64, 1), 0.5)], dim=-1))
     assert np.abs(p_tilt[:, 2] - raised[:, 2]).max() < 0.01
-    env.close()
-
-
-def test_home_tool_pose():
-    """The constants teleoperation integrates its target from."""
-    env = gym.make("SO101BlockStack-v1", num_envs=64).unwrapped
-    env.reset(seed=0)
-
-    p, quat = _tcp(env, torch.as_tensor(HOME_QPOS).repeat(64, 1))
-    w, x, y, z = quat.T
-    jaw = np.stack([1 - 2 * (y * y + z * z), 2 * (x * y + w * z)], -1)
-    down = np.stack([2 * (x * z + w * y), 2 * (y * z - w * x), 1 - 2 * (x * x + y * y)], -1)
-
-    assert np.abs(p[0] - HOME_TCP).max() < 1e-5
-    assert abs(np.arctan2(jaw[0, 1], jaw[0, 0]) - HOME_JAW_YAW) < 1e-5
-    assert abs(np.arctan2(-down[0, 2], np.hypot(down[0, 0], down[0, 1])) - HOME_TILT) < 1e-5
     env.close()

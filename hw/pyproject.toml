@@ -9,7 +9,6 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     "vla-test-sim",
     "lerobot[feetech,pi,peft]==0.6.0",
-    "pyspacemouse>=1.1",
 ]
 
 [tool.uv.sources]
