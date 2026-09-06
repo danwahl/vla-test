@@ -21,8 +21,8 @@ ROLLOUT = "rlinf/workers/rollout/hf/huggingface_worker.py"
 ENV = "rlinf/workers/env/env_worker.py"
 ACTOR = "rlinf/workers/actor/fsdp_actor_worker.py"
 
-# Modules with no call site to share, which are simply imported by name once the edits
-# below reference them.
+# Modules with no call site to share, imported by name once the edits below reference
+# them.
 FILES = {
     "task.py": "rlinf/envs/maniskill/tasks/so101_block_stack.py",
     "dataconfig.py": "rlinf/models/embodiment/openpi/dataconfig/so101_block_stack.py",

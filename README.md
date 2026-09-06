@@ -58,9 +58,9 @@ The checkpoint is rolled out on the 150 held-out layouts and scored by the gates
 
 ![sixteen held-out layouts](docs/sim_eval.gif)
 
-Sixteen of those it stacks, two or three from each colour ordering.
+Sixteen of those it stacks.
 
-Each chunk is then read back off a shape-preserving cubic through a few of its own steps before it is executed. A chunk carries the motion the policy intends and a step-to-step wobble on top of it, and the curve holds the motion while dropping the wobble. The run reports the second difference left in the commands. `--no-smooth` executes the chunk as it arrives.
+Each chunk is then read back off a shape-preserving cubic through a few of its own steps before it is executed. A chunk carries the motion the policy intends and a step-to-step wobble on top of it. The run reports the second difference left in the commands. `--no-smooth` executes the chunk as it arrives.
 
 ```bash
 uv run python sim/scripts/eval.py \
@@ -69,7 +69,7 @@ uv run python sim/scripts/eval.py \
 
 `--video DIR` records each batch, and `--no-rtc` denoises each chunk on its own. `--layouts FILE` scores the checkpoint on another dataset's held-out layouts; the normalization travels with the checkpoint, so only the spawns change. The run reports what the checkpoint costs to run beside what it scores: the weights it loads, the peak it reaches rolling out, and the median time a chunk takes to denoise.
 
-`--int8` holds the weights that read the observation at eight bits, five sevenths of what a policy holds: the language backbone and the vision tower. The action expert and the projections that emit the commands keep the precision they were trained at. It roughly halves what the weights occupy, which the run reports. Scored over three seeds of the held-out layouts the two sit within each other's spread, and the layouts they disagree on are ones neither takes on all three seeds, so the flag moves layouts that were already close either way.
+`--int8` holds the weights that read the observation at eight bits, five sevenths of what a policy holds: the language backbone and the vision tower. The action expert and the projections that emit the commands keep the precision they were trained at. It roughly halves what the weights occupy. Scored over three seeds of the held-out layouts the two sit within each other's spread, and the layouts they disagree on are ones neither takes on all three seeds, so the flag moves layouts that were already close either way.
 
 ## Reinforcement learning
 
@@ -167,6 +167,6 @@ uv run python -m hw.rollout CHECKPOINT --indices 0 1 2
 
 ![the arm placing a block](docs/hw_rollout.gif)
 
-The end of one rollout, at the speed it runs.
+The end of one rollout.
 
-`--freehand` takes the blocks wherever they are put and opens from rest, and `--steps` runs past the sim episode limit so the policy can have another go at a pick it missed. Chunks are stitched and smoothed the way `sim/scripts/eval.py` does both. Denoising the next one takes long enough to see, so the arm runs on the chunk it already has while that happens, and RTC is told how many steps that will take so the two join.
+`--freehand` takes the blocks wherever they are put and opens from rest, and `--steps` runs past the sim episode limit so the policy can have another go at a pick it missed. Chunks are stitched and smoothed the way `sim/scripts/eval.py` does. Denoising the next one takes long enough to see, so the arm runs on the chunk it already has while that happens, and RTC is told how many steps that will take so the two join.
