@@ -6,7 +6,7 @@ Each layout is planned in sim first, then it goes up on the overlay console so t
 can be put where the sim put them, then the oracle's joint commands go out open loop at
 the sim's control rate. The commands are the sim's; the states and frames are the arm's,
 so the episode reads as a demonstration on hardware and the difference between the two is
-what the trajectory did not survive.
+what the trajectory lost on the way to the arm.
 
 The arm waits at its park pose while the blocks go down and returns there afterwards, so
 the console shows an unobstructed table between episodes and the layout can be judged
@@ -24,16 +24,23 @@ from lerobot.utils.feature_utils import build_dataset_frame
 
 from hw.oracle import LAYOUTS, planner
 from hw.overlay import serve
-from hw.robot import FPS, PARK_QPOS, actions, follower, home, observations, pick, walk_to
-from sim.dataset import create, finalize
+from hw.robot import (
+    FPS,
+    PARK_QPOS,
+    actions,
+    follower,
+    home,
+    observations,
+    pick,
+    release,
+    walk_to,
+)
+from sim.dataset import HW, create, finalize
 from sim.spec import JOINT_NAMES
 
 
 def replay(robot, commands, dataset, task):
     """Send each command in turn, keeping the observation that preceded it.
-
-    An episode is one frame per command at the sim's rate, so that is what the dataset
-    gets.
 
     Returns the narrowest the jaw reached over the close ``pick`` finds, in the follower's
     own gripper units. A block between the jaws stops them short of the commanded close, so
@@ -65,7 +72,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("out", type=Path)
-    parser.add_argument("--repo-id", default="vla-test/so101_block_stack_hw")
+    parser.add_argument("--repo-id", default=HW)
     parser.add_argument("--layouts", type=Path, default=LAYOUTS)
     parser.add_argument("--indices", type=int, nargs="+", default=[0])
     parser.add_argument("--port", type=int, default=8000)
@@ -75,10 +82,10 @@ def main():
 
     dataset = create(args.out, args.repo_id, FPS, args.resume)
     robot = follower()
-    robot.connect()
     try:
+        robot.connect()
         home(robot, PARK_QPOS)
-        with serve(robot, args.out, args.port) as console, planner(args.layouts) as plan:
+        with serve(robot, args.port) as console, planner(args.layouts) as plan:
             for number, index in enumerate(args.indices, 1):
                 where = f"{number}/{len(args.indices)}  layout {index}"
                 console.say(f"{where}: planning")
@@ -101,7 +108,7 @@ def main():
                 console.say(f"{where}: jaw closed to {jaw:.1f}")
                 print(f"layout {index}: jaw closed to {jaw:.1f}")
     finally:
-        robot.disconnect()
+        release(robot)
         # Where the parquet footers are written, so the episodes a run did record stay
         # readable when it is stopped part way through a list of layouts.
         finalize(dataset)

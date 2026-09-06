@@ -1,6 +1,9 @@
+import json
+
+import cv2
 import numpy as np
 
-from hw.robot import actions, observations, pick, picks
+from hw.robot import CALIBRATION, actions, observations, pick, picks
 from sim.spec import (
     GRIPPER_CLOSED,
     GRIPPER_OPEN,
@@ -28,13 +31,24 @@ def test_units_round_trip():
 
 
 def test_cameras_land_on_the_sim_pinhole():
-    observation = observations()(follower_observation(HOME_QPOS))
+    """A mark on each lens' own axis comes out on `K_SIM`'s.
 
+    The remap sends an output pixel through `K_SIM` and back out through `K_real`, so the
+    two principal points are the one pair of pixels that has to correspond whatever the
+    distortion is.
+    """
+    frame = follower_observation(HOME_QPOS)
+    for camera in ("top", "wrist"):
+        lens = json.loads((CALIBRATION / f"{camera}.json").read_text())
+        centre = np.array(lens["K_real"])[:2, 2]
+        cv2.circle(frame[camera], centre.round().astype(int), 4, (255, 255, 255), -1)
+
+    observation = observations()(frame)
     for camera in ("top", "wrist"):
         assert observation[camera].shape == (IMAGE_SIZE, IMAGE_SIZE, 3)
-        # A flat frame comes through flat, including the rows the wrist lens reprojects
-        # from off the sensor, which `BORDER_REPLICATE` fills from the edge.
-        assert observation[camera].min() == observation[camera].max() == 40
+        brightest = np.argwhere(observation[camera][..., 0] == 255).mean(axis=0)
+        assert np.abs(brightest - IMAGE_SIZE / 2).max() < 1.0
+
 
 def test_pick_is_the_first_close():
     assert pick([OPEN] * 3 + [SHUT] * 4 + [OPEN] * 2) == slice(3, 7)

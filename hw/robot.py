@@ -55,14 +55,15 @@ CAMERA_PORT = {"top": "pci-0000:0e:00.0-usb-0:4.3:1.0-video-index0",
 
 # The rate the sim env runs its controller at, so a replayed trajectory keeps its timing.
 FPS = 10
-# The rate `walk_to` writes to the bus at.
 COMMAND_HZ = 50
-# How long `home` holds its last setpoint, comfortably past the servos' own lag.
+# How long `home` takes to reach its pose, and how long it holds there afterwards,
+# comfortably past the servos' own lag.
+HOME_SECONDS = 3.0
 SETTLE_SECONDS = 0.5
 
-# How far a joint may be commanded from where it is, in degrees. The oracle's largest step
-# at the sim's control rate is 2.9 degrees on the arm, so this is clear of the motion it
-# asks for and still catches a lunge.
+# How far a joint may be commanded from where it is, in degrees: clear of the motion a
+# cycle asks for at the sim's control rate, and short of a lunge. `lerobot` logs each time
+# it clamps a command to this.
 MAX_RELATIVE_TARGET = 10.0
 
 
@@ -71,17 +72,31 @@ def camera_index(port):
     return int((BY_PATH / port).resolve().name.removeprefix("video"))
 
 
-def follower(port=PORT, cameras=CAMERA_PORT):
+def follower():
     """The arm and its two lenses, at the resolution the calibration was taken at."""
     return SO101Follower(SO101FollowerConfig(
-        port=port,
+        port=PORT,
         id=FOLLOWER_ID,
         use_degrees=True,
         max_relative_target=MAX_RELATIVE_TARGET,
         cameras={name: OpenCVCameraConfig(index_or_path=camera_index(usb),
                                           width=640, height=480, fps=30)
-                 for name, usb in cameras.items()},
+                 for name, usb in CAMERA_PORT.items()},
     ))
+
+
+def release(robot):
+    """Disconnect whatever came up, torque off.
+
+    `connect` brings the bus up before the cameras, so a camera that fails to open leaves
+    the arm energized while `robot.is_connected` reads False and `robot.disconnect`
+    refuses to run.
+    """
+    if robot.bus.is_connected:
+        robot.bus.disconnect()
+    for camera in robot.cameras.values():
+        if camera.is_connected:
+            camera.disconnect()
 
 
 @dataclass
@@ -166,22 +181,16 @@ def actions():
 
 
 # Where the arm waits between episodes, folded back over its own base and short of where
-# the blocks go, so the next layout is placed against a frame it does not obstruct. Three
-# of the angles are what the arm allows rather than what is tidy: `shoulder_pan` stays at
-# zero because a quarter turn either way rubs the camera post, `shoulder_lift` is at the
-# description's lower limit, and `wrist_flex` waits well below the right angle its
-# neighbours are at, far enough that the jaw clears the arm it folds back over and short
-# of the angle the servo stalls at. The arm has to stand where the sim draws it for the
-# overlay to be worth anything.
+# the blocks go, so the next layout is placed against a frame it does not obstruct. A
+# quarter turn of `shoulder_pan` either way rubs the camera post, `shoulder_lift` is at the
+# description's lower limit, and `wrist_flex` is far enough below its neighbours that the
+# jaw clears the arm it folds back over and short of where the servo stalls. The overlay
+# renders the arm here, so it has to stand where the sim draws it.
 PARK_QPOS = np.array([*np.deg2rad([0.0, -100.0, 90.0, 70.0, 0.0]), GRIPPER_OPEN])
 
 
 def _ramp(start, goal, steps):
-    """The setpoints from ``start`` to ``goal``, paced on the `COMMAND_HZ` clock.
-
-    Sleeping the whole period on top of the caller's work stretches the motion, and a
-    trajectory is paced for the sim's clock.
-    """
+    """The setpoints from ``start`` to ``goal``, paced on the `COMMAND_HZ` clock."""
     for step in range(1, steps + 1):
         began = time.perf_counter()
         yield start + (goal - start) * step / steps
@@ -192,8 +201,8 @@ def walk_to(robot, to_robot, held, command, observation):
     """Send one control step as the bus writes along the way to it.
 
     The sim's controller settles inside one of its own steps, so the joint path between
-    setpoints is continuous there; a Feetech servo at P_Coefficient 16 reaches the setpoint
-    and dwells, which the arm shows as stepping. Dividing the same path into
+    setpoints is continuous there; a Feetech servo reaches the setpoint and dwells, which
+    the arm shows as stepping. Dividing the same path into
     `COMMAND_HZ / FPS` writes gives it a reference that moves the way the sim's does, and
     leaves the commanded trajectory unchanged.
     """
@@ -202,7 +211,7 @@ def walk_to(robot, to_robot, held, command, observation):
                                     observation)))
 
 
-def home(robot, qpos=HOME_QPOS, seconds=3.0):
+def home(robot, qpos=HOME_QPOS):
     """Ramp to ``qpos`` and hold there, at a pace the servos track under their own control.
 
     A Feetech servo trails its setpoint by up to 90 ms, and the ramp runs to its last
@@ -211,7 +220,7 @@ def home(robot, qpos=HOME_QPOS, seconds=3.0):
     """
     start = np.array([robot.get_observation()[f"{joint}.pos"] for joint in JOINT_NAMES])
     goal = np.rad2deg(qpos)
-    for blend in chain(_ramp(start, goal, int(seconds * COMMAND_HZ)),
+    for blend in chain(_ramp(start, goal, int(HOME_SECONDS * COMMAND_HZ)),
                        _ramp(goal, goal, int(SETTLE_SECONDS * COMMAND_HZ))):
         robot.send_action({f"{joint}.pos": float(value)
                            for joint, value in zip(JOINT_NAMES, blend, strict=True)})

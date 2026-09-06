@@ -1,7 +1,5 @@
 """Show a sim layout on top of the live camera, to place the blocks against.
 
-    uv run python -m hw.overlay --index 0
-
 Served as a page rather than drawn in a window, so the operator can stand at the arm and
 work from whatever is in their hand. Blend towards the sim view to find where a block
 belongs, towards the live view to see where it is. The edge mode draws the sim view's
@@ -14,22 +12,19 @@ frame over whatever the caller does with the arm in between.
 
 from __future__ import annotations
 
-import argparse
 import socket
 import threading
 import time
 from contextlib import contextmanager, suppress
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import cv2
 import numpy as np
 
-from hw.robot import PARK_QPOS, ToSimCameras, follower, home
+from hw.robot import FPS, ToSimCameras
 from sim.spec import CAMERAS
 
-FPS = 15
 BOUNDARY = "frame"
 
 PAGE = """<!doctype html>
@@ -51,8 +46,6 @@ PAGE = """<!doctype html>
   <label><input type=checkbox id=edges checked> sim edges</label>
   <label><input type=radio name=cam value=top checked> top</label>
   <label><input type=radio name=cam value=wrist> wrist</label>
-  <button id=snap>save png</button>
-  <span id=saved></span>
 </div>
 <img src="/stream">
 <script>
@@ -62,7 +55,6 @@ PAGE = """<!doctype html>
  for (const r of document.querySelectorAll('input[name=cam]')) r.onchange = send;
  ready.onclick = () => fetch('/answer?say=ready');
  skip.onclick = () => fetch('/answer?say=skip');
- snap.onclick = async () => saved.textContent = await (await fetch('/snapshot')).text();
  setInterval(async () => note.textContent = await (await fetch('/note')).text(), 500);
 </script>
 """
@@ -71,16 +63,15 @@ PAGE = """<!doctype html>
 class Console:
     """What the page is composing, and what the operator has told it."""
 
-    def __init__(self, robot, out):
+    def __init__(self, robot):
         self.robot = robot
-        self.out = out
         self.to_sim = ToSimCameras()
         self.blend, self.edges, self.camera = 0.5, True, CAMERAS[0]
         self.views, self.note, self.answer = None, "", None
-        self.jpeg, self.frame, self.saved = None, None, 0
+        self.jpeg = None
         self.lock = threading.Lock()
-        # Composing costs a remap and a JPEG encode. The replay runs to a 50 Hz clock, so
-        # this stands down while it has the arm and the stream sits on its last frame.
+        # Composing costs a remap and a JPEG encode on the caller's clock, so this stands
+        # down while `place` waits and the stream sits on its last frame.
         self.live = threading.Event()
 
     def compose(self, stop):
@@ -106,7 +97,7 @@ class Console:
             ok, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
             if ok:
                 with self.lock:
-                    self.jpeg, self.frame = buffer.tobytes(), frame
+                    self.jpeg = buffer.tobytes()
 
     def say(self, note):
         """Put a line of status on the page."""
@@ -128,11 +119,7 @@ class Console:
 
     @contextmanager
     def watch(self):
-        """Compose the stream while the caller has the arm, so the operator sees it move.
-
-        Composing costs a remap and an encode on the caller's clock, which is why `place`
-        clears it.
-        """
+        """Compose the stream while the caller has the arm, so the operator sees it move."""
         self.live.set()
         try:
             yield
@@ -143,8 +130,7 @@ class Console:
 def compose(sim_view, live, blend, edges):
     """The two views as one frame, in the byte order the encoder wants.
 
-    Without a sim view the live frame stands alone, which is what a caller wanting the
-    page for its button rather than for a layout gets.
+    Without a sim view the live frame stands alone.
 
     The outline comes off the three channels rather than off their luminance, because the
     sim green block and the sim table sit within 2% of each other in luminance and a
@@ -191,17 +177,6 @@ def handler(console):
                 with console.lock:
                     console.answer = query["say"][0]
                 self._send(b"ok")
-            elif route.path == "/snapshot":
-                with console.lock:
-                    console.saved += 1
-                    frame = console.frame
-                    path = console.out / f"{console.camera}_{console.saved:02d}.png"
-                if frame is None:
-                    self._send(b"no frame yet")
-                else:
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                    cv2.imwrite(str(path), frame)
-                    self._send(f"wrote {path.name}".encode())
             elif route.path == "/stream":
                 self.send_response(200)
                 self.send_header("Content-Type",
@@ -235,9 +210,9 @@ def address():
 
 
 @contextmanager
-def serve(robot, out, port):
+def serve(robot, port):
     """A console on ``port``, for as long as the block runs."""
-    console = Console(robot, out)
+    console = Console(robot)
     stop = threading.Event()
     server = ThreadingHTTPServer(("0.0.0.0", port), handler(console))
     print(f"http://{address()}:{port}/", flush=True)
@@ -248,34 +223,4 @@ def serve(robot, out, port):
     finally:
         stop.set()
         server.shutdown()
-
-
-def main():
-    # Imported here rather than at the top because it reaches the simulator, and the
-    # console itself runs anywhere the cameras do.
-    from hw.oracle import LAYOUTS, planner
-
-    parser = argparse.ArgumentParser(description=__doc__,
-                                     formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--layouts", type=Path, default=LAYOUTS)
-    parser.add_argument("--index", type=int, default=0)
-    parser.add_argument("--port", type=int, default=8000)
-    parser.add_argument("--out", type=Path, default=Path("."))
-    args = parser.parse_args()
-
-    with planner(args.layouts) as plan:
-        laid_out = plan(args.index)
-    print(f"layout {args.index}: {laid_out.prompt}")
-
-    robot = follower()
-    robot.connect()
-    try:
-        home(robot, PARK_QPOS)
-        with serve(robot, args.out, args.port) as console:
-            console.place(laid_out.views, f"layout {args.index}: {laid_out.prompt}")
-    finally:
-        robot.disconnect()
-
-
-if __name__ == "__main__":
-    main()
+        server.server_close()

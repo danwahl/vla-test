@@ -4,8 +4,8 @@
     uv run python -m hw.rollout CHECKPOINT --freehand --steps 1000 --held red --target blue
 
 The policy reads the arm's own cameras and joint positions and its commands go to the bus.
-Chunks are stitched with Real-Time Chunking the way `sim/scripts/eval.py` executes them,
-smoothed the same way, and a chunk runs open loop until the next one replaces it.
+Chunks are stitched and smoothed the way `sim/scripts/eval.py` executes them, and a chunk
+runs open loop until the next one replaces it.
 
 Denoising the next chunk takes long enough to see, so the arm runs on the chunk it
 already has while that happens. RTC is told how many steps that will take and returns a
@@ -35,7 +35,18 @@ import torch
 from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
 
 from hw.overlay import serve
-from hw.robot import FPS, PARK_QPOS, actions, follower, home, observations, picks, walk_to
+from hw.robot import (
+    FPS,
+    PARK_QPOS,
+    actions,
+    follower,
+    home,
+    observations,
+    picks,
+    release,
+    walk_to,
+)
+from sim.dataset import SIM, root
 from sim.policy import load_policy, smooth
 from sim.spec import BLOCK_NAMES, CAMERAS, HOME_QPOS, JOINT_NAMES, prompt
 
@@ -59,21 +70,29 @@ class Replan(threading.Thread):
         super().__init__()
         self.policy, self.batch = policy, batch
         self.leftover, self.delay, self.horizon = leftover, delay, horizon
-        self.chunk, self.took = None, 0.0
+        self.chunk, self.took, self.error = None, 0.0, None
 
     def run(self):
         began = time.perf_counter()
-        self.chunk = self.policy.predict_action_chunk(
-            self.batch,
-            prev_chunk_left_over=self.leftover,
-            inference_delay=self.delay,
-            execution_horizon=self.horizon,
-        )
+        try:
+            self.chunk = self.policy.predict_action_chunk(
+                self.batch,
+                prev_chunk_left_over=self.leftover,
+                inference_delay=self.delay,
+                execution_horizon=self.horizon,
+            )
+        except Exception as error:
+            self.error = error
         self.took = time.perf_counter() - began
 
+    def join(self, timeout=None):
+        """Wait for the chunk, raising here whatever the thread raised there."""
+        super().join(timeout)
+        if self.error is not None:
+            raise self.error
 
-def rollout(robot, policy, preprocessor, postprocessor, task, steps, horizon,
-            smoothing=True):
+
+def rollout(robot, policy, preprocessor, postprocessor, task, steps, horizon):
     """Drive the arm for ``steps``, replanning every ``horizon``.
 
     How many steps a replan is given comes from how long the last one took, since that is
@@ -113,13 +132,8 @@ def rollout(robot, policy, preprocessor, postprocessor, task, steps, horizon,
             drive(command, frame)
         replan.join()
 
-        # The next chunk is guided onto this one as the policy wrote it, so smoothing
-        # changes what the arm is told and not what the model is asked to agree with.
         leftover = replan.chunk[:, horizon:]
-        commands = postprocessor(replan.chunk)
-        if smoothing:
-            commands = smooth(commands)
-        commands = commands[0].cpu().numpy()
+        commands = smooth(postprocessor(replan.chunk))[0].cpu().numpy()
         for command in commands[delay:horizon]:
             drive(command, frame)
         # What the next chunk will be guided onto, and how much of it will have run by
@@ -131,7 +145,7 @@ def rollout(robot, policy, preprocessor, postprocessor, task, steps, horizon,
 
 
 def episode(robot, console, policy, preprocessor, postprocessor, where, task, views,
-            start, steps, horizon, smoothing):
+            start, steps, horizon):
     """Hold for the blocks, drive the policy, and park. ``None`` if the console skips it."""
     if not console.place(views, f"{where}: {task}"):
         return None
@@ -141,8 +155,7 @@ def episode(robot, console, policy, preprocessor, postprocessor, where, task, vi
         # known clearance over the blocks.
         home(robot)
         home(robot, start)
-        jaw = rollout(robot, policy, preprocessor, postprocessor, task, steps, horizon,
-                      smoothing)
+        jaw = rollout(robot, policy, preprocessor, postprocessor, task, steps, horizon)
         home(robot, PARK_QPOS)
     console.say(f"{where}: jaw closed to {jaw:.1f}")
     return jaw
@@ -162,20 +175,13 @@ def main():
     parser.add_argument("--target", choices=BLOCK_NAMES, default=BLOCK_NAMES[1],
                         help="freehand only")
     parser.add_argument("--episodes", type=int, default=6, help="freehand only")
-    parser.add_argument("--dataset", type=Path,
-                        default=Path("/data/datasets/so101_block_stack_sim_v2"))
-    parser.add_argument("--repo-id", default="vla-test/so101_block_stack_sim_v2")
+    parser.add_argument("--dataset", type=Path, default=root(SIM))
+    parser.add_argument("--repo-id", default=SIM)
     parser.add_argument("--horizon", type=int, default=20, help="steps executed per chunk")
     # A cycle can be run from wherever the last one left the arm, so an episode longer than
     # the sim limit is one that lets the policy have another go at a pick it missed.
     parser.add_argument("--steps", type=int, help="default: the sim episode limit")
-    parser.add_argument("--no-rtc", action="store_true", help="denoise each chunk on its own")
-    parser.add_argument("--no-smooth", action="store_true",
-                        help="execute each chunk as the policy wrote it")
-    parser.add_argument("--int8", action="store_true",
-                        help="hold the backbone and vision tower as int8")
     parser.add_argument("--port", type=int, default=8000)
-    parser.add_argument("--out", type=Path, default=Path("."))
     args = parser.parse_args()
 
     steps = args.steps
@@ -189,17 +195,16 @@ def main():
 
     policy, preprocessor, postprocessor = load_policy(
         args.checkpoint, LeRobotDatasetMetadata(args.repo_id, root=args.dataset),
-        args.horizon, "cuda", rtc=not args.no_rtc, int8=args.int8)
+        args.horizon, "cuda")
     print(f"{args.checkpoint}, {steps} steps an episode", flush=True)
 
     robot = follower()
-    robot.connect()
     try:
+        robot.connect()
         home(robot, PARK_QPOS)
-        with serve(robot, args.out, args.port) as console:
+        with serve(robot, args.port) as console:
             run = partial(episode, robot, console, policy, preprocessor, postprocessor,
-                          steps=steps, horizon=args.horizon,
-                          smoothing=not args.no_smooth)
+                          steps=steps, horizon=args.horizon)
             if args.freehand:
                 task = prompt(BLOCK_NAMES.index(args.held), BLOCK_NAMES.index(args.target))
                 for number in range(1, args.episodes + 1):
@@ -217,15 +222,14 @@ def main():
                     where = f"{number}/{len(args.indices)}  layout {index}"
                     console.say(f"{where}: planning")
                     laid_out = plan(index)
-                    misses = "" if laid_out.stacked else ", which the oracle misses in sim"
-                    print(f"layout {index}: {laid_out.prompt}{misses}", flush=True)
+                    print(f"layout {index}: {laid_out.prompt}", flush=True)
 
                     jaw = run(where=where, task=laid_out.prompt, views=laid_out.views,
                               start=laid_out.start)
                     if jaw is not None:
                         print(f"layout {index}: jaw closed to {jaw:.1f}", flush=True)
     finally:
-        robot.disconnect()
+        release(robot)
 
 
 if __name__ == "__main__":
