@@ -10,12 +10,10 @@ from lerobot.processor import RenameObservationsProcessorStep
 from torchao.quantization import Int8WeightOnlyConfig, quantize_
 
 # Both run once per chunk and hand the action expert a cache, so they sit the far side of
-# the model from the commands. The weights are unpacked for each matmul, which buys memory
-# and not speed.
+# the model from the commands. The weights are unpacked for each matmul.
 OBSERVATION_MODULES = ("paligemma.model.language_model", "paligemma.model.vision_tower")
 
-# How many of a chunk's steps `smooth` keeps. The eval reports the second difference this
-# leaves in the commands, beside the layouts the run stacks.
+# How many of a chunk's steps `smooth` keeps.
 CONTROL_POINTS = 13
 
 
@@ -34,19 +32,19 @@ def _end_slope(near, beyond, h_near, h_beyond):
     return torch.where(runaway, 3 * near, slope)
 
 
-def smooth(chunk, control_points=CONTROL_POINTS):
+def smooth(chunk):
     """``chunk`` (envs, steps, joints) read back off a cubic through some of its steps.
 
     A chunk carries the motion the policy intends and a step-to-step wobble on top of it.
-    Keeping ``control_points`` of the steps and riding a curve between them holds the
-    motion and drops the wobble.
+    Keeping `CONTROL_POINTS` of the steps and curving between them holds the motion and
+    drops the wobble.
 
     The slopes are Fritsch-Carlson, the same shape-preserving rule the oracle's keyposes
     use, so no piece leaves the interval its two control points span. A chunk is smoothed
     whole and executed in part, so the steps that reach the arm sit inside the curve.
     """
     steps = chunk.shape[1]
-    at = torch.linspace(0, steps - 1, control_points,
+    at = torch.linspace(0, steps - 1, CONTROL_POINTS,
                         device=chunk.device).round().long().unique()
     knots = chunk[:, at]
     widths = (at[1:] - at[:-1]).to(chunk.dtype)[None, :, None]

@@ -2,6 +2,8 @@
 
 An end-to-end example of training a vision-language-action policy on an [SO-101](https://github.com/TheRobotStudio/SO-ARM100): oracle, demonstration collection, fine-tuning, evaluation, reinforcement learning, hardware.
 
+The demonstrations and the trained checkpoints are on the Hub: [so101_block_stack_sim](https://huggingface.co/datasets/drwahl/so101_block_stack_sim), [so101_block_stack_hw](https://huggingface.co/datasets/drwahl/so101_block_stack_hw) and [so101_block_stack](https://huggingface.co/datasets/drwahl/so101_block_stack), [pi05_so101_block_stack_sim](https://huggingface.co/drwahl/pi05_so101_block_stack_sim) and [pi05_so101_block_stack](https://huggingface.co/drwahl/pi05_so101_block_stack).
+
 ## Sim
 
 A [ManiSkill3](https://github.com/haosulab/ManiSkill) cell, with the arm under absolute joint-position control, three 30 mm colour blocks on a table, and two cameras on the intrinsic calibrated from the physical arm's InnoMaker U20CAM.
@@ -18,17 +20,15 @@ Rendering needs a GPU with Vulkan.
 
 A scripted oracle plans the pick-and-stack in closed form and drives every parallel environment at once. Layouts are screened on state alone and only the ones it stacks get rendered, so every episode is a success.
 
-An episode starts where a cycle would leave the arm, jaws open or shut, and its first move is out to a stand-off above the block the prompt names. A pick that closed on nothing leaves the arm among those poses, so recovering from one is in the demonstrations.
-
-Every env carries its own cursor through the cycle, so each one arrives at a keypose in the steps its own travel takes and an episode is as long as its own arm was moving.
+An episode starts where a cycle leaves the arm, jaws open or shut, and its first move is out to a stand-off above the block the prompt names. A pick that closed on nothing leaves the arm among those poses, so recovering from one is in the demonstrations.
 
 ```bash
 uv run python sim/scripts/collect.py OUT
 ```
 
-360 episodes in [LeRobot](https://github.com/huggingface/lerobot) v3.0 format at 10 Hz, 60 for each of the six colour orderings: the five arm joints and the gripper as `observation.state` and `action`, and 480x480 H.264 from the wrist and top cameras. `meta/train_layouts.jsonl` records the spawn and the opening pose each episode started from, and `meta/eval_layouts.jsonl` 150 more, held out, to measure a policy on. Both are what `reset` takes back, so an eval sets off from where a demonstration did.
+360 episodes in [LeRobot](https://github.com/huggingface/lerobot) v3.0 format at 10 Hz, 60 for each of the six colour orderings: the five arm joints and the gripper as `observation.state` and `action`, and 480x480 H.264 from the wrist and top cameras. `meta/train_layouts.jsonl` records the spawn and the opening pose each episode started from, and `meta/eval_layouts.jsonl` 150 more, held out, to measure a policy on. An episode is as long as its own arm was moving. Both are what `reset` takes back, so an eval sets off from where a demonstration did.
 
-`meta/stats.json` gives `observation.state` and `action` the arm's joint travel as their normalization range. pi0.5 spells the state out in its prompt as one of 256 bins across that range and does not clip, so a range drawn from the demonstrations alone would read every pose outside them as the same bin.
+`meta/stats.json` gives `observation.state` and `action` the arm's joint travel as their normalization range. pi0.5 spells the state out in its prompt as one of 256 bins across that range and does not clip, so the range has to hold every pose the arm can reach.
 
 ## Fine-tuning
 
@@ -56,7 +56,7 @@ uv run python train/merge.py \
 
 The checkpoint is rolled out on the 150 held-out layouts and scored by the gates that screened the oracle. Chunks are stitched with [Real-Time Chunking](https://www.physicalintelligence.company/research/real_time_chunking).
 
-Each chunk then rides a shape-preserving cubic through a few of its own steps before it is executed. A chunk carries the motion the policy intends and a step-to-step wobble on top of it, and the curve holds the motion while dropping the wobble. The run reports the second difference left in the commands. `--no-smooth` executes the chunk as it arrives.
+Each chunk is then read back off a shape-preserving cubic through a few of its own steps before it is executed. A chunk carries the motion the policy intends and a step-to-step wobble on top of it, and the curve holds the motion while dropping the wobble. The run reports the second difference left in the commands. `--no-smooth` executes the chunk as it arrives.
 
 ```bash
 uv run python sim/scripts/eval.py \
@@ -65,7 +65,7 @@ uv run python sim/scripts/eval.py \
 
 `--video DIR` records each batch, and `--no-rtc` denoises each chunk on its own. `--layouts FILE` scores the checkpoint on another dataset's held-out layouts; the normalization travels with the checkpoint, so only the spawns change. The run reports what the checkpoint costs to run beside what it scores: the weights it loads, the peak it reaches rolling out, and the median time a chunk takes to denoise.
 
-`--int8` holds the weights that read the observation at eight bits, five sevenths of what a policy holds: the language backbone and the vision tower. The action expert and the projections that emit the commands keep the precision they were trained at. It roughly halves what the weights occupy, which the run reports. Scored over three seeds of the held-out layouts the two sit within each other's spread, and the layouts they disagree on are ones neither takes on all three seeds, so the flag moves layouts that were already close either way. The weights are unpacked for each matmul, which costs about a tenth of the time a chunk takes.
+`--int8` holds the weights that read the observation at eight bits, five sevenths of what a policy holds: the language backbone and the vision tower. The action expert and the projections that emit the commands keep the precision they were trained at. It roughly halves what the weights occupy, which the run reports. Scored over three seeds of the held-out layouts the two sit within each other's spread, and the layouts they disagree on are ones neither takes on all three seeds, so the flag moves layouts that were already close either way.
 
 ## Reinforcement learning
 
@@ -105,9 +105,6 @@ python $VLA_TEST_DIR/rl/patch.py $RLINF_DIR
 Then, with `WANDB_API_KEY` and `HF_TOKEN` in the environment:
 
 ```bash
-hf download drwahl/pi05_so101_block_stack_sim --include 'openpi/*' \
-    --local-dir /data/checkpoints/pi05_so101_block_stack_sim
-
 # score the warm start, then PPO from it
 python $RLINF_DIR/evaluations/eval_embodied_agent.py \
     --config-path $VLA_TEST_DIR/rl --config-name pi05_so101_ppo
@@ -137,56 +134,31 @@ uv run python rl/to_lerobot.py \
 
 `hw/` runs the same task on the physical arm through [LeRobot](https://github.com/huggingface/lerobot)'s `SO101Follower`. `hw/robot.py` holds the processor steps that make the arm look like the simulator: degrees to radians, `<joint>.pos` to the sim's bare joint names, and each lens undistorted and reprojected onto `K_SIM` as a 480x480 frame. Episodes are written with `sim/src/sim/dataset.py`, the schema `sim/scripts/collect.py` writes, so hardware and sim episodes are interchangeable.
 
-`uv sync --package vla-test-hw` installs this without the trainer. `hw/robot.py` holds the rig's serial port and the USB port each camera sits in, and `hw/calibration/` each lens' charuco intrinsic.
+`uv sync --package vla-test-hw` installs this without the trainer. `hw/robot.py` holds the rig's serial port and the USB port each camera sits in, and `hw/calibration/` each lens's charuco intrinsic.
 
-The table is read from the sim rather than perceived. A layout is planned there, `hw/overlay.py` blends that layout's camera view with the live one, and the blocks are moved onto their sim positions:
-
-```bash
-uv run python -m hw.overlay --index 0
-```
-
-`hw/oracle_replay.py` does that and then sends the oracle's joint commands open loop, recording the arm's own states and frames against them:
+The table is read from the sim rather than perceived. `hw/oracle_replay.py` plans a layout there, `hw/overlay.py` blends that layout's camera view with the live one so the blocks can be moved onto their sim positions, and then the oracle's joint commands go out open loop, recording the arm's own states and frames against them:
 
 ```bash
 uv run python -m hw.oracle_replay OUT --indices 0 1 2
 ```
 
-Both take `--layouts`, which defaults to the spawns the sim demonstrations were collected on, so a policy trained on either set is still scored against layouts it has not seen.
+`--layouts` defaults to the spawns the sim demonstrations were collected on, so a policy trained on either set is still scored against layouts it has not seen.
 
-`hw/teleop.py` drives the arm with a 3DConnexion SpaceMouse instead. The cap translates the tool, tilts it and turns the jaw; its two buttons work the gripper. The target is integrated from the home pose and solved by `sim/src/sim/kinematics.py`, the same closed form the oracle plans with, so teleoperated and scripted episodes occupy one joint-space distribution.
-
-```bash
-uv run python -m hw.teleop --held red --target green --out OUT
-```
-
-Without `--out` it teleoperates and records nothing.
-
-`train/pi05_so101_hw.yaml` fine-tunes on what these record, as a fresh adapter over the merged sim weights:
+lerobot trains on one dataset, so learning from sim and hardware together means writing both into one. `sim/scripts/combine.py` copies the sim dataset and appends the hardware episodes to the copy, repeated `--repeat` times, which is what sets how much of a batch comes off the arm. `train/pi05_so101_mix.yaml` trains on the result from `lerobot/pi05_base`, at the sim recipe and budget, with each frame jittered for brightness, contrast, saturation and hue over ranges the size of what separates a rendered frame from one off the arm:
 
 ```bash
-uv run lerobot-train --config_path=train/pi05_so101_hw.yaml \
-                     --output_dir=/data/checkpoints/pi05_so101_block_stack_hw \
-                     --job_name=pi05_so101_block_stack_hw \
-                     --wandb.run_id=pi05_so101_block_stack_hw
-```
-
-lerobot trains on one dataset, so learning from sim and hardware together means writing both into one. `sim/scripts/combine.py` copies the sim dataset and appends the hardware episodes to the copy, repeated `--repeat` times, which is what sets how much of a batch comes off the arm. `train/pi05_so101_mix.yaml` trains on the result from `lerobot/pi05_base`, at the sim recipe and budget:
-
-```bash
-uv run python sim/scripts/combine.py /data/datasets/so101_block_stack_mix
+uv run python sim/scripts/combine.py /data/datasets/so101_block_stack
 
 uv run lerobot-train --config_path=train/pi05_so101_mix.yaml \
-                     --output_dir=/data/checkpoints/pi05_so101_block_stack_mix \
-                     --job_name=pi05_so101_block_stack_mix \
-                     --wandb.run_id=pi05_so101_block_stack_mix
+                     --output_dir=/data/checkpoints/pi05_so101_block_stack \
+                     --job_name=pi05_so101_block_stack \
+                     --wandb.run_id=pi05_so101_block_stack
 ```
 
-`train/pi05_so101_hw_base.yaml` is the same recipe on the hardware episodes alone, the control for what the sim start supplies.
-
-`hw/rollout.py` is the evaluation, with the arm where the simulator was. The blocks go anywhere on the table, the console's button starts the episode, and whether it stacked is the operator's call:
+`hw/rollout.py` is the evaluation, with the arm where the simulator was. Each layout is planned in sim, the console shows where its blocks belong, and the arm opens in the pose that layout carries, which is the state `sim/scripts/eval.py` hands the same policy. Whether it stacked is the operator's call:
 
 ```bash
-uv run python -m hw.rollout CHECKPOINT --held red --target blue
+uv run python -m hw.rollout CHECKPOINT --indices 0 1 2
 ```
 
-Chunks are stitched and smoothed the way `sim/scripts/eval.py` does both. Denoising the next one takes long enough to see, so the arm runs on the chunk it already has while that happens, and RTC is told how many steps that will take so the two join.
+`--freehand` takes the blocks wherever they are put and opens from rest, and `--steps` runs past the sim episode limit so the policy can have another go at a pick it missed. Chunks are stitched and smoothed the way `sim/scripts/eval.py` does both. Denoising the next one takes long enough to see, so the arm runs on the chunk it already has while that happens, and RTC is told how many steps that will take so the two join.
