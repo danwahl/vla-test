@@ -1,6 +1,5 @@
-# pi0.5 fine-tuned on the sim and hardware demonstrations together, at the recipe and the
-# budget `train/pi05_so101_lora_backbone.yaml` uses, so its sim score is read against that
-# run's. Stock lerobot-train runs this file as it stands:
+# The sim recipe and budget, on the sim and hardware demonstrations together. Stock
+# lerobot-train runs this file as it stands:
 #
 #   uv run lerobot-train --config_path=train/pi05_so101_mix.yaml \
 #                        --output_dir=... --job_name=...
@@ -13,10 +12,33 @@ policy:
   scheduler_decay_steps: 20000
 
 dataset:
-  repo_id: vla-test/so101_block_stack_mix
+  repo_id: drwahl/so101_block_stack
   # Where sim/scripts/combine.py wrote it, with the hardware episodes repeated: the repeat
   # count there is what sets how much of a batch comes off the arm.
-  root: /data/datasets/so101_block_stack_mix
+  root: /data/datasets/so101_block_stack
+  # Contrast and saturation are what a change of lighting moves. Both lenses expose
+  # themselves and hold the frame mean across that change, so brightness is the axis that
+  # moves least. Hue stays well inside the separation between the three colours the prompt
+  # names.
+  #
+  # Where a camera points is left alone. The top camera is bolted to the arm's own base, so
+  # where a block sits in its frame is what says where the block is.
+  image_transforms:
+    enable: true
+    max_num_transforms: 3
+    tfs:
+      brightness:
+        type: ColorJitter
+        kwargs: {brightness: [0.85, 1.2]}
+      contrast:
+        type: ColorJitter
+        kwargs: {contrast: [0.6, 1.7]}
+      saturation:
+        type: ColorJitter
+        kwargs: {saturation: [0.5, 2.0]}
+      hue:
+        type: ColorJitter
+        kwargs: {hue: [-0.035, 0.035]}
 
 peft:
   method_type: LORA
