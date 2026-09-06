@@ -3,9 +3,8 @@
     uv run python sim/scripts/combine.py OUT
 
 lerobot trains on one dataset, so a policy that learns from both is trained on a dataset
-holding both. The hardware set is the smaller by an order of magnitude, and how many times
-it is written here is what sets how much of a batch comes off the arm; the default puts
-about a quarter of the frames on the arm.
+holding both. How many times the hardware set is written here is what sets how much of a
+batch comes off the arm.
 
 The sim tree is copied and the hardware episodes are appended to the copy, so only the
 repeated frames are encoded again. Copying also carries the layout files across, which is
@@ -20,7 +19,7 @@ from pathlib import Path
 
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-from sim.dataset import create, finalize
+from sim.dataset import HW, MIX, SIM, create, finalize, root
 from sim.spec import CAMERAS
 
 
@@ -48,19 +47,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("out", type=Path)
-    parser.add_argument("--sim", type=Path,
-                        default=Path("/data/datasets/so101_block_stack_sim_v2"))
-    parser.add_argument("--hw", type=Path,
-                        default=Path("/data/datasets/so101_block_stack_hw_v2"))
+    parser.add_argument("--sim", type=Path, default=root(SIM))
+    parser.add_argument("--hw", type=Path, default=root(HW))
     parser.add_argument("--repeat", type=int, default=3,
                         help="times the hardware set is written")
-    parser.add_argument("--repo-id", default="vla-test/so101_block_stack_mix_v2")
+    parser.add_argument("--repo-id", default=MIX)
     args = parser.parse_args()
 
     # `return_uint8` hands back the frames as they were stored, so a repeat is a decode and
-    # an encode rather than a trip through float. A dataset on disk carries no repo id of
-    # its own, so `--hw` supplies both the path and the name.
-    hardware = LeRobotDataset(f"vla-test/{args.hw.name}", root=args.hw, return_uint8=True)
+    # an encode rather than a trip through float.
+    hardware = LeRobotDataset(HW, root=args.hw, return_uint8=True)
     print(f"{hardware.meta.total_episodes} hardware episodes, "
           f"{hardware.meta.total_frames} frames, written {args.repeat} times", flush=True)
     demonstrations = episodes(hardware)

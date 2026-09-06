@@ -1,18 +1,30 @@
 """The one schema demonstrations are written in, wherever they were collected.
 
-Sim and hardware episodes have to be interchangeable to a policy, so they share this
-rather than each declaring their own.
+Sim and hardware episodes have to be interchangeable to a policy.
 """
 
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from lerobot.configs.video import RGBEncoderConfig
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-from .agent import LIMITS
-from .spec import CAMERAS, IMAGE_SIZE, JOINT_NAMES
+from .spec import CAMERAS, IMAGE_SIZE, JOINT_NAMES, LIMITS
+
+# The three datasets the scripts here read and write, under the names they are published
+# as. `MIX` is `combine.py`'s output, the sim and hardware sets in one.
+SIM = "drwahl/so101_block_stack_sim"
+HW = "drwahl/so101_block_stack_hw"
+MIX = "drwahl/so101_block_stack"
+
+DATASETS = Path("/data/datasets")
+
+
+def root(repo_id):
+    """Where a dataset sits on this machine."""
+    return DATASETS / repo_id.split("/")[-1]
 
 FEATURES = {
     "observation.state": {"dtype": "float32", "shape": (len(JOINT_NAMES),),
@@ -41,7 +53,7 @@ def finalize(dataset):
     pi0.5 reads ``observation.state`` as one of 256 bins spanning q01 to q99, spelled out in
     the prompt as text and clipped nowhere, so a joint outside that span reads as one of the
     span's edges whatever angle it is really at. ``action`` is a joint position too, so it
-    takes the same span. The arm's travel holds every pose it can reach and means the same
+    takes the same span. The arm's travel holds every pose it can reach, and means the same
     thing in every dataset the arm appears in.
 
     Callers close a dataset out from a ``finally``, so a run that stopped before saving an

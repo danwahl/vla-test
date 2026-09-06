@@ -2,7 +2,7 @@
 
 The sim layout is made true of the table: the views here show where its blocks sit, the
 operator moves the physical blocks onto them, and then the joint commands here are
-replayed open loop. Whether the arm traces the sim trajectory is the whole first test.
+replayed open loop.
 """
 
 from __future__ import annotations
@@ -10,7 +10,6 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import partial
-from pathlib import Path
 
 import gymnasium as gym
 import numpy as np
@@ -18,13 +17,14 @@ import torch
 
 import sim.env  # noqa: F401  (registers the env)
 from hw.robot import PARK_QPOS
+from sim.dataset import SIM, root
 from sim.oracle import Oracle
 from sim.spec import CAMERAS
 
 # The spawns the sim demonstrations were collected on, which is where hardware layouts are
 # drawn from too: the held-out set beside it is what a policy trained on either is scored
 # against.
-LAYOUTS = Path("/data/datasets/so101_block_stack_sim_v2/meta/train_layouts.jsonl")
+LAYOUTS = root(SIM) / "meta" / "train_layouts.jsonl"
 
 
 @dataclass
@@ -85,8 +85,9 @@ def planner(layouts):
     """One sim, planning layouts one after another.
 
     The env is built once rather than per layout because a dozen make-and-close cycles in
-    a process exhaust the render device, and the next one cannot find the GPU at all.
+    a process exhaust the render device.
     """
+    # `num_envs=1` selects the CPU backend, which is what makes `parked`'s teleport render.
     env = gym.make("SO101BlockStack-v1", num_envs=1, obs_mode="rgb",
                    layouts=str(layouts), sample=False).unwrapped
     try:

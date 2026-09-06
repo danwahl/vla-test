@@ -24,7 +24,7 @@ policy:
   scheduler_decay_steps: 20000
 
 dataset:
-  repo_id: vla-test/so101_block_stack_sim
+  repo_id: drwahl/so101_block_stack_sim
   # Where sim/scripts/collect.py wrote it.
   root: /data/datasets/so101_block_stack_sim
 
