@@ -1,0 +1,20 @@
+[project]
+name = "vla-test-hw"
+version = "0.1.0"
+description = "The SO-101 block stack on physical hardware."
+requires-python = ">=3.12,<3.13"
+# The sim package supplies the oracle, the layouts and the camera model the hardware is
+# matched to; the feetech extra supplies the motor bus, and the pi and peft extras are what
+# `rollout` loads a checkpoint with, adapter or merged.
+dependencies = [
+    "vla-test-sim",
+    "lerobot[feetech,pi,peft]==0.6.0",
+]
+
+[tool.uv.sources]
+vla-test-sim = { workspace = true }
+
+# A dependency set rather than an installed package: `hw` is imported from the repo root,
+# which is what `python -m hw.<script>` gives it.
+[tool.uv]
+package = false

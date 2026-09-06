@@ -7,7 +7,7 @@ module at startup, so the arm reaches it from ``PYTHONPATH``.
 
 import torch
 
-import sim  # noqa: F401  registers SO101BlockStack-v1 and the arm
+import sim.env  # noqa: F401  registers SO101BlockStack-v1 and the arm
 
 
 def wrap_obs(raw_obs, env):

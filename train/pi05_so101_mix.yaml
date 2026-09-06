@@ -1,0 +1,66 @@
+# The sim recipe and budget, on the sim and hardware demonstrations together. Stock
+# lerobot-train runs this file as it stands:
+#
+#   uv run lerobot-train --config_path=train/pi05_so101_mix.yaml \
+#                        --output_dir=... --job_name=...
+
+policy:
+  path: lerobot/pi05_base
+  push_to_hub: false
+  dtype: bfloat16
+  gradient_checkpointing: true
+  scheduler_decay_steps: 20000
+
+dataset:
+  repo_id: drwahl/so101_block_stack
+  # Where sim/scripts/combine.py wrote it, with the hardware episodes repeated: the repeat
+  # count there is what sets how much of a batch comes off the arm.
+  root: /data/datasets/so101_block_stack
+  # Contrast and saturation are what a change of lighting moves. Both lenses expose
+  # themselves and hold the frame mean across that change, so brightness is the axis that
+  # moves least. Hue stays well inside the separation between the three colours the prompt
+  # names.
+  #
+  # Where a camera points is left alone. The top camera is bolted to the arm's own base, so
+  # where a block sits in its frame is what says where the block is.
+  image_transforms:
+    enable: true
+    max_num_transforms: 3
+    tfs:
+      brightness:
+        type: ColorJitter
+        kwargs: {brightness: [0.85, 1.2]}
+      contrast:
+        type: ColorJitter
+        kwargs: {contrast: [0.6, 1.7]}
+      saturation:
+        type: ColorJitter
+        kwargs: {saturation: [0.5, 2.0]}
+      hue:
+        type: ColorJitter
+        kwargs: {hue: [-0.035, 0.035]}
+
+peft:
+  method_type: LORA
+  r: 32
+  lora_alpha: 64
+  target_modules: '.*\.paligemma\.model\.language_model\.layers\.\d+\.(self_attn\.[qkvo]_proj|mlp\.(gate|up|down)_proj)'
+  full_training_modules:
+    - gemma_expert.model
+    - action_in_proj
+    - action_out_proj
+    - time_mlp_in
+    - time_mlp_out
+
+rename_map:
+  observation.images.top: observation.images.base_0_rgb
+  observation.images.wrist: observation.images.left_wrist_0_rgb
+
+steps: 20000
+batch_size: 4
+save_freq: 5000
+
+wandb:
+  enable: true
+  project: vla-test
+  disable_artifact: true

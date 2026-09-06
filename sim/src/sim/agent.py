@@ -2,28 +2,17 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import ClassVar
 
-import numpy as np
 import sapien
 import torch
 from mani_skill.agents.base_agent import BaseAgent, Keyframe
 from mani_skill.agents.controllers import PDJointPosControllerConfig
 from mani_skill.agents.registration import register_agent
 
-ARM_JOINTS = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll"]
-JOINT_NAMES = [*ARM_JOINTS, "gripper"]
-
-# One width for open and one for closed, so a policy reads a single unambiguous pair. The
-# jaw faces stand 57 mm apart open and 22 mm apart closed, either side of the 30 mm block.
-GRIPPER_OPEN = 0.6
-GRIPPER_CLOSED = 0.09
+from .spec import ARM_JOINTS, HOME_QPOS, JOINT_NAMES, URDF_PATH
 
 BASE_POSE = sapien.Pose(p=[0.0, 0.0, 0.74])
-
-# The arm folded back over its own base, the physical SO-101's rest pose.
-HOME_QPOS = np.array([-0.1414, 0.3624, -1.1317, 1.5485, -0.0915, GRIPPER_OPEN], np.float32)
 
 _GRIP = {"material": "grip", "patch_radius": 0.1, "min_patch_radius": 0.1}
 
@@ -31,7 +20,7 @@ _GRIP = {"material": "grip", "patch_radius": 0.1, "min_patch_radius": 0.1}
 @register_agent()
 class SO101(BaseAgent):
     uid = "so101"
-    urdf_path = str(Path(__file__).parent / "description" / "so101.urdf")
+    urdf_path = str(URDF_PATH)
     urdf_config: ClassVar[dict] = {
         "_materials": {
             "grip": {"static_friction": 1.5, "dynamic_friction": 1.5, "restitution": 0.0}

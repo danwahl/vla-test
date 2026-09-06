@@ -18,25 +18,12 @@ from pathlib import Path
 import gymnasium as gym
 import numpy as np
 import torch
-from lerobot.configs.video import RGBEncoderConfig
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-import sim  # noqa: F401  (registers the env)
-from sim.agent import JOINT_NAMES
-from sim.env import IMAGE_SIZE, PAIRS, prompt, write_layouts
+import sim.env  # noqa: F401  (registers the env)
+from sim.dataset import create, finalize
+from sim.env import PAIRS, write_layouts
 from sim.oracle import Oracle
-
-CAMERAS = ("wrist", "top")
-
-FEATURES = {
-    "observation.state": {"dtype": "float32", "shape": (len(JOINT_NAMES),),
-                          "names": JOINT_NAMES},
-    "action": {"dtype": "float32", "shape": (len(JOINT_NAMES),), "names": JOINT_NAMES},
-    **{f"observation.images.{camera}": {"dtype": "video",
-                                        "shape": (IMAGE_SIZE, IMAGE_SIZE, 3),
-                                        "names": ["height", "width", "channel"]}
-       for camera in CAMERAS},
-}
+from sim.spec import CAMERAS, prompt
 
 
 def screen(env, need, seed):
@@ -47,6 +34,11 @@ def screen(env, need, seed):
         pairs = [short[i % len(short)] for i in range(env.num_envs)]
         env.reset(seed=seed + batch, options={"layout": {
             "held": [pair[0] for pair in pairs], "target": [pair[1] for pair in pairs]}})
+        # Drawn against the spawns that just landed and fed back through `reset`, so the
+        # layout carries the pose the oracle was screened from and a replay of it opens
+        # the arm in the same place.
+        start = Oracle(env).draw_start()
+        env.reset(options={"layout": {**env.layout(), "qpos": start}})
         layout = {key: value.cpu().numpy() for key, value in env.layout().items()}
 
         Oracle(env).run(env.held, env.target)
@@ -63,9 +55,10 @@ def screen(env, need, seed):
 def rollout(env, layouts):
     """Replay a batch of ``layouts`` with the cameras on, keeping every step.
 
-    Returns the commands, the observations that earned them, and which envs stacked. One
-    snapshot is taken before the first command and one after each, so ``snapshots[t]`` is
-    what the oracle saw when it chose ``commands[t]``.
+    Returns the commands, the observations that earned them, how many steps each env spent
+    on its own cycle, and which envs stacked. One snapshot is taken before the first command
+    and one after each, so ``snapshots[t]`` is what the oracle saw when it chose
+    ``commands[t]``.
     """
     obs, _ = env.reset(options={"layout": {
         key: np.stack([item[key] for item in layouts]) for key in layouts[0]}})
@@ -81,21 +74,22 @@ def rollout(env, layouts):
         snapshot(obs)
 
     snapshot(obs)
-    oracle.run(env.held, env.target, on_step=step)
-    return commands, snapshots, env.evaluate()["success"].cpu().numpy()
+    ran = oracle.run(env.held, env.target, on_step=step)
+    return (commands, snapshots, ran.cpu().numpy(),
+            env.evaluate()["success"].cpu().numpy())
 
 
 def record(env, layouts, dataset, quota):
     """Replay ``layouts`` and save each one as an episode, returning the ones written.
 
-    Every env in a batch runs the same phases, so an episode is as long as the batch's
-    slowest env; the tail of a short last batch repeats a layout and is dropped.
+    An episode runs as long as its own env took, so its frames stop where its own arm
+    stopped moving; the tail of a short last batch repeats a layout and is dropped.
     """
     written = []
     for start in range(0, len(layouts), env.num_envs):
         batch = layouts[start:start + env.num_envs]
         padded = batch + [batch[-1]] * (env.num_envs - len(batch))
-        commands, snapshots, won = rollout(env, padded)
+        commands, snapshots, ran, won = rollout(env, padded)
 
         for i, item in enumerate(batch):
             pair = (int(item["held"]), int(item["target"]))
@@ -103,7 +97,8 @@ def record(env, layouts, dataset, quota):
                 continue
             quota[pair] -= 1
             task = prompt(*pair)
-            for command, (qpos, *images) in zip(commands, snapshots[:-1], strict=True):
+            for command, (qpos, *images) in zip(commands[:ran[i]], snapshots[:ran[i]],
+                                                strict=True):
                 dataset.add_frame({
                     "observation.state": qpos[i].astype(np.float32),
                     "action": command[i].astype(np.float32),
@@ -113,7 +108,7 @@ def record(env, layouts, dataset, quota):
                 })
             dataset.save_episode()
             written.append(item)
-        print(f"record {len(written)} episodes, {len(commands)} frames each, "
+        print(f"record {len(written)} episodes, {ran.min()}-{ran.max()} frames each, "
               f"{sum(quota.values())} still owed", flush=True)
     return written
 
@@ -131,11 +126,7 @@ def main():
     torch.manual_seed(args.seed)
     state_env = gym.make("SO101BlockStack-v1", num_envs=args.envs).unwrapped
     fps = round(1 / state_env.control_timestep)
-    dataset = LeRobotDataset.create(repo_id=args.repo_id, fps=fps, features=FEATURES,
-                                    root=args.out, robot_type="so101",
-                                    # H.264 rather than the AV1 default: every loader
-                                    # downstream of here decodes it.
-                                    rgb_encoder=RGBEncoderConfig(vcodec="h264"))
+    dataset = create(args.out, args.repo_id, fps)
     render_env = gym.make("SO101BlockStack-v1", num_envs=args.envs, obs_mode="rgb").unwrapped
 
     quota = dict.fromkeys(PAIRS, args.per_pair)
@@ -146,7 +137,7 @@ def main():
                           dataset, quota)
         seed += 1_000
     render_env.close()
-    dataset.finalize()
+    finalize(dataset)
 
     # Carrying on from the seed the loop reached keeps the held-out spawns off the train
     # ones. They cycle through the pairs, so a truncated eval still covers all six.

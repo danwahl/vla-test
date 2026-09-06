@@ -1,3 +1,4 @@
-"""Importing this package registers the ``so101`` agent and ``SO101BlockStack-v1``."""
+"""The SO-101 in simulation.
 
-from . import agent, env  # noqa: F401
+Importing `sim.env` is what registers the ``so101`` agent and ``SO101BlockStack-v1``.
+"""

@@ -2,7 +2,7 @@ import gymnasium as gym
 import numpy as np
 import torch
 
-import sim  # noqa: F401  (registers the env)
+import sim.env  # noqa: F401  (registers the env)
 from sim.kinematics import TILT_DOWN, ik
 
 

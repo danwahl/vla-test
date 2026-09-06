@@ -1,7 +1,7 @@
 # One lockfile across both environments, so the checkpoint `train` produces loads under the
 # same torch and lerobot that `sim` evaluates it with.
 [tool.uv.workspace]
-members = ["sim", "train", "rl"]
+members = ["sim", "train", "rl", "hw"]
 
 [dependency-groups]
 dev = [
@@ -11,12 +11,15 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["sim/tests"]
+testpaths = ["sim/tests", "rl/tests", "hw/tests"]
+# `hw` is imported from the repo root, so its tests need the root the same way
+# `python -m hw.<script>` gives it.
+pythonpath = ["."]
 
 [tool.ruff]
 line-length = 100
-# Where the first-party package lives, for import sorting.
-src = ["sim/src"]
+# Where the first-party packages live, for import sorting.
+src = ["sim/src", "."]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "C4", "RUF"]
