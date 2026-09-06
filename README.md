@@ -56,6 +56,10 @@ uv run python train/merge.py \
 
 The checkpoint is rolled out on the 150 held-out layouts and scored by the gates that screened the oracle. Chunks are stitched with [Real-Time Chunking](https://www.physicalintelligence.company/research/real_time_chunking).
 
+![sixteen held-out layouts](docs/sim_eval.gif)
+
+Sixteen of those it stacks, two or three from each colour ordering.
+
 Each chunk is then read back off a shape-preserving cubic through a few of its own steps before it is executed. A chunk carries the motion the policy intends and a step-to-step wobble on top of it, and the curve holds the motion while dropping the wobble. The run reports the second difference left in the commands. `--no-smooth` executes the chunk as it arrives.
 
 ```bash
@@ -160,5 +164,9 @@ uv run lerobot-train --config_path=train/pi05_so101_mix.yaml \
 ```bash
 uv run python -m hw.rollout CHECKPOINT --indices 0 1 2
 ```
+
+![the arm placing a block](docs/hw_rollout.gif)
+
+The end of one rollout, at the speed it runs.
 
 `--freehand` takes the blocks wherever they are put and opens from rest, and `--steps` runs past the sim episode limit so the policy can have another go at a pick it missed. Chunks are stitched and smoothed the way `sim/scripts/eval.py` does both. Denoising the next one takes long enough to see, so the arm runs on the chunk it already has while that happens, and RTC is told how many steps that will take so the two join.
