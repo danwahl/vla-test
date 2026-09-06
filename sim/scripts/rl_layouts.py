@@ -2,9 +2,8 @@
 
     uv run python sim/scripts/rl_layouts.py OUT.jsonl --count 5000
 
-The env samples a fresh spawn at every reset and the oracle stacks about 94% of them.
-Drawing from a screened pool instead keeps the other 6% out of the reward and the eval,
-and fixes the population both are read against. Colour pairs are cycled, so the pool
+Drawing from a screened pool keeps the spawns the oracle misses out of the reward and the
+eval, and fixes the population both are read against. Colour pairs are cycled, so the pool
 covers all six evenly.
 """
 
@@ -40,6 +39,9 @@ def main():
         pairs = [PAIRS[(batch * env.num_envs + i) % len(PAIRS)] for i in range(env.num_envs)]
         env.reset(seed=args.seed + batch, options={"layout": {
             "held": [pair[0] for pair in pairs], "target": [pair[1] for pair in pairs]}})
+        # Drawn against the spawns that just landed and fed back through `reset`, the way
+        # `collect.py` does it, so a pool layout opens where a demonstration opens.
+        env.reset(options={"layout": {**env.layout(), "qpos": Oracle(env).draw_start()}})
         layout = {key: value.cpu().numpy() for key, value in env.layout().items()}
 
         Oracle(env).run(env.held, env.target)

@@ -6,9 +6,8 @@ Chunks are stitched with Real-Time Chunking: each one is guided onto the tail of
 chunk it replaces. ``--no-rtc`` denoises each chunk on its own instead, which is how the
 RL rollout executes them.
 
-Each chunk rides a cubic through a few of its own steps before it is executed, which holds
-the motion and drops the step-to-step wobble the policy writes on top of it. ``--no-smooth``
-executes the chunk as it arrives.
+``--no-smooth`` executes each chunk as it arrives, rather than off the cubic
+`sim.policy.smooth` reads it back from.
 """
 
 from __future__ import annotations
@@ -25,8 +24,9 @@ from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
 from mani_skill.utils.visualization.misc import images_to_video, tile_images
 
 import sim.env  # noqa: F401  (registers the env)
+from sim.dataset import SIM, root
 from sim.policy import load_policy, smooth
-from sim.spec import BLOCK_NAMES, CAMERAS, HOME_QPOS
+from sim.spec import BLOCK_NAMES, CAMERAS
 
 
 def observation(obs, tasks):
@@ -56,7 +56,7 @@ def rollout(env, policy, preprocessor, postprocessor, layouts, horizon, steps,
         "yaw": np.array([item["yaws"] for item in layouts], np.float32),
         "held": np.array([item["held"] for item in layouts]),
         "target": np.array([item["target"] for item in layouts]),
-        "qpos": np.array([item.get("start", HOME_QPOS) for item in layouts], np.float32),
+        "qpos": np.array([item["start"] for item in layouts], np.float32),
     }})
     tasks = [item["prompt"] for item in layouts]
     stacked = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
@@ -103,8 +103,8 @@ def report(results):
               f"{sum(r['lifted'] for r in rows)} lifted, of {len(rows)}")
 
     line("all", results)
-    for held in range(3):
-        for target in range(3):
+    for held in range(len(BLOCK_NAMES)):
+        for target in range(len(BLOCK_NAMES)):
             rows = [r for r in results if (r["held"], r["target"]) == (held, target)]
             if rows:
                 line(f"  {BLOCK_NAMES[held]} on {BLOCK_NAMES[target]}", rows)
@@ -113,9 +113,8 @@ def report(results):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("checkpoint", type=Path)
-    parser.add_argument("--dataset", type=Path,
-                        default=Path("/data/datasets/so101_block_stack_sim"))
-    parser.add_argument("--repo-id", default="vla-test/so101_block_stack_sim")
+    parser.add_argument("--dataset", type=Path, default=root(SIM))
+    parser.add_argument("--repo-id", default=SIM)
     # The normalization comes from the processors saved beside the checkpoint, so a
     # checkpoint can be scored on another dataset's held-out layouts and only the spawns
     # change.

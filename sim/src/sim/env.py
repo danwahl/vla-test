@@ -90,7 +90,7 @@ def read_layouts(path):
         "yaw": np.array([row["yaws"] for row in rows], np.float32),
         "held": np.array([row["held"] for row in rows]),
         "target": np.array([row["target"] for row in rows]),
-        "qpos": np.array([row.get("start", HOME_QPOS) for row in rows], np.float32),
+        "qpos": np.array([row["start"] for row in rows], np.float32),
     }
 
 
