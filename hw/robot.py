@@ -28,7 +28,7 @@ from lerobot.processor import (
     transition_to_robot_action,
 )
 from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
-from lerobot.types import RobotAction, RobotObservation
+from lerobot.lerobot_types import RobotAction, RobotObservation
 from lerobot.utils.robot_utils import precise_sleep
 
 from sim.spec import (

@@ -1,4 +1,8 @@
-"""A trained checkpoint, loaded the way both the sim eval and the arm need it."""
+"""A trained checkpoint, loaded the way both the sim eval and the arm need it.
+
+The pi0.5 steps below are the ones a checkpoint of another policy does not take: it keeps
+its vocabulary heads, and there is no stitching to configure.
+"""
 
 from __future__ import annotations
 
@@ -15,6 +19,10 @@ OBSERVATION_MODULES = ("paligemma.model.language_model", "paligemma.model.vision
 
 # How many of a chunk's steps `smooth` keeps.
 CONTROL_POINTS = 13
+
+# The same knob under the two names the policies give it: how many Euler steps a chunk is
+# denoised in.
+DENOISE_FIELDS = ("num_inference_steps", "num_inference_timesteps")
 
 
 def _end_slope(near, beyond, h_near, h_beyond):
@@ -75,14 +83,20 @@ def smooth(chunk):
             + (s3 - s2) * width * slopes[:, piece + 1])
 
 
-def load_policy(checkpoint, metadata, horizon, device, rtc=True, int8=False):
+def load_policy(checkpoint, metadata, horizon, device, rtc=True, int8=False,
+                denoise_steps=None):
     """The checkpoint's policy and the processors saved beside it, which carry the
     camera renaming and the normalization stats from training."""
     config = PreTrainedConfig.from_pretrained(checkpoint)
     config.pretrained_path = checkpoint
     # Built in host memory and moved once it is the size it will run at.
     config.device = "cpu"
-    config.rtc_config = RTCConfig(execution_horizon=horizon, enabled=rtc)
+    # Only a policy that stitches carries the config for it.
+    if hasattr(config, "rtc_config"):
+        config.rtc_config = RTCConfig(execution_horizon=horizon, enabled=rtc)
+    if denoise_steps is not None:
+        # Read once when the action head is built, so it is set before the policy is made.
+        setattr(config, next(f for f in DENOISE_FIELDS if hasattr(config, f)), denoise_steps)
 
     preprocessor, postprocessor = make_pre_post_processors(
         policy_cfg=config,
@@ -97,19 +111,25 @@ def load_policy(checkpoint, metadata, horizon, device, rtc=True, int8=False):
     # A checkpoint saved with its adapter comes back wrapped, which puts the module holding
     # the backbone a level deeper than one saved without.
     inner = policy.model
-    model = inner if hasattr(inner, "paligemma_with_expert") else inner.model
-    # Actions leave through `action_out_proj`, so neither vocabulary head is on the path a
-    # chunk takes.
-    model.paligemma_with_expert.paligemma.lm_head = None
-    model.paligemma_with_expert.gemma_expert.lm_head = None
-    if int8:
-        # `version=2` scales each output channel on its own, so a channel with a narrow
-        # range keeps its resolution. Setting inductor's config is left alone because it
-        # turns on TF32 for every float32 matmul in the process, the vision tower included.
-        quantize_(model.paligemma_with_expert,
-                  Int8WeightOnlyConfig(version=2, set_inductor_config=False),
-                  filter_fn=lambda module, name: (isinstance(module, torch.nn.Linear)
-                                                  and name.startswith(OBSERVATION_MODULES)))
+    model = inner if hasattr(inner, "paligemma_with_expert") else getattr(inner, "model", inner)
+    backbone = getattr(model, "paligemma_with_expert", None)
+    if backbone is not None:
+        # Actions leave through `action_out_proj`, so neither vocabulary head is on the
+        # path a chunk takes.
+        backbone.paligemma.lm_head = None
+        backbone.gemma_expert.lm_head = None
+        if int8:
+            # `version=2` scales each output channel on its own, so a channel with a narrow
+            # range keeps its resolution. Setting inductor's config is left alone because it
+            # turns on TF32 for every float32 matmul in the process, the vision tower
+            # included.
+            quantize_(backbone,
+                      Int8WeightOnlyConfig(version=2, set_inductor_config=False),
+                      filter_fn=lambda module, name: (isinstance(module, torch.nn.Linear)
+                                                      and name.startswith(OBSERVATION_MODULES)))
+    elif int8:
+        raise NotImplementedError(
+            f"`OBSERVATION_MODULES` names pi0.5's backbone; {config.type} needs its own")
     policy.to(device)
     policy.eval()
     return policy, preprocessor, postprocessor

@@ -8,7 +8,7 @@ requires-python = ">=3.12,<3.13"
 # `rollout` loads a checkpoint with, adapter or merged.
 dependencies = [
     "vla-test-sim",
-    "lerobot[feetech,pi,peft]==0.6.0",
+    "lerobot[feetech,pi,peft]==0.6.1",
 ]
 
 [tool.uv.sources]

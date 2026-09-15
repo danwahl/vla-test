@@ -64,6 +64,16 @@ DISTURB_TOL = 0.015
 HOLD_REWARD = 0.005
 
 
+def tilted(pose, degrees):
+    """``pose`` pitched about the camera's own lateral axis.
+
+    A camera on a bracket is aimed by hand, and the overhead view is the one the policy
+    reads block positions off, so a fraction of a degree there is worth measuring.
+    """
+    half = np.deg2rad(degrees) / 2
+    return pose * sapien.Pose(q=[np.cos(half), 0.0, np.sin(half), 0.0])
+
+
 def write_layouts(path, layouts, key):
     """One line per layout, giving the spawn a run can be replayed from."""
     with Path(path).open("w") as out:
@@ -102,7 +112,8 @@ class SO101BlockStack(BaseEnv):
     # compute_dense_reward is implemented.
     SUPPORTED_REWARD_MODES: ClassVar[tuple[str, ...]] = ("none",)
 
-    def __init__(self, *args, robot_uids="so101", layouts=None, sample=True, **kwargs):
+    def __init__(self, *args, robot_uids="so101", layouts=None, sample=True,
+                 top_tilt_deg=0.0, **kwargs):
         # Shadows are the depth cue in the wrist view.
         kwargs.setdefault("enable_shadow", True)
         # Screened spawns to draw resets from instead of sampling fresh ones. Read before
@@ -111,6 +122,8 @@ class SO101BlockStack(BaseEnv):
         # Unset, env i takes layout i from the pool at every reset, so two runs are scored
         # on the same episodes.
         self._sample = sample
+        # Read by _default_sensor_configs, which the base class reaches while it builds.
+        self._top_tilt_deg = top_tilt_deg
         super().__init__(*args, robot_uids=robot_uids, **kwargs)
 
     @property
@@ -122,10 +135,13 @@ class SO101BlockStack(BaseEnv):
     @property
     def _default_sensor_configs(self):
         return [
-            CameraConfig(name, pose=CAM_MOUNT_POSE, width=IMAGE_SIZE, height=IMAGE_SIZE,
+            CameraConfig(name, pose=pose, width=IMAGE_SIZE, height=IMAGE_SIZE,
                          intrinsic=K_SIM, near=0.001, far=10.0, mount=mount)
-            for name, mount in [("wrist", self.agent.wrist_cam_link),
-                                ("top", self.agent.top_cam_link)]
+            for name, mount, pose in [
+                ("wrist", self.agent.wrist_cam_link, CAM_MOUNT_POSE),
+                ("top", self.agent.top_cam_link,
+                 tilted(CAM_MOUNT_POSE, self._top_tilt_deg)),
+            ]
         ]
 
     @property

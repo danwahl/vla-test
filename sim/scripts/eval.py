@@ -4,7 +4,8 @@
 
 Chunks are stitched with Real-Time Chunking: each one is guided onto the tail of the
 chunk it replaces. ``--no-rtc`` denoises each chunk on its own instead, which is how the
-RL rollout executes them.
+RL rollout executes them. A policy with no stitching of its own executes whole chunks and
+takes neither flag.
 
 ``--no-smooth`` executes each chunk as it arrives, rather than off the cubic
 `sim.policy.smooth` reads it back from.
@@ -68,21 +69,22 @@ def rollout(env, policy, preprocessor, postprocessor, layouts, horizon, steps,
     if frames is not None:
         snapshot()
 
+    # A policy that does not stitch is asked for a chunk and nothing else; it has no tail
+    # to guide the next one onto.
+    stitching = policy.supports_rtc()
     leftover, latencies, sent = None, [], []
     for _ in range(0, steps, horizon):
         began = time.perf_counter()
-        chunk = policy.predict_action_chunk(
-            preprocessor(observation(obs, tasks)),
-            prev_chunk_left_over=leftover,
-            inference_delay=0,
-            execution_horizon=horizon,
-        )
+        batch = preprocessor(observation(obs, tasks))
+        chunk = (policy.predict_action_chunk(batch, prev_chunk_left_over=leftover,
+                                             inference_delay=0, execution_horizon=horizon)
+                 if stitching else policy.predict_action_chunk(batch))
         # The call queues work and returns, so the clock has to wait for the device.
         torch.cuda.synchronize()
         latencies.append(time.perf_counter() - began)
         # The next chunk is guided onto this one as the policy wrote it, so smoothing
         # changes what the arm is told and not what the model is asked to agree with.
-        leftover = chunk[:, horizon:]
+        leftover = chunk[:, horizon:] if stitching else None
         commands = postprocessor(chunk)
         if smoothing:
             commands = smooth(commands)
@@ -120,7 +122,8 @@ def main():
     # change.
     parser.add_argument("--layouts", type=Path,
                         help="default: the dataset's own held-out layouts")
-    parser.add_argument("--horizon", type=int, default=20, help="steps executed per chunk")
+    parser.add_argument("--horizon", type=int, default=20,
+                        help="steps executed per chunk, where the policy stitches")
     parser.add_argument("--no-rtc", action="store_true", help="denoise each chunk on its own")
     parser.add_argument("--no-smooth", action="store_true",
                         help="execute each chunk as the policy wrote it")
@@ -134,6 +137,10 @@ def main():
     parser.add_argument("--out", type=Path, help="write each layout's outcome")
     # The layouts are fixed, but the policy draws fresh noise for every chunk it denoises.
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--denoise-steps", type=int,
+                        help="Euler steps a chunk is denoised in; default: the policy's own")
+    parser.add_argument("--top-tilt", type=float, default=0.0,
+                        help="degrees of top-camera pitch, as a bracket aimed by hand")
     args = parser.parse_args()
 
     torch.manual_seed(args.seed)
@@ -141,14 +148,18 @@ def main():
         layouts = [json.loads(line) for line in file][:args.episodes]
 
     env = gym.make("SO101BlockStack-v1", num_envs=args.envs, obs_mode="rgb",
-                   render_mode="rgb_array").unwrapped
+                   render_mode="rgb_array", top_tilt_deg=args.top_tilt).unwrapped
     steps = gym.spec("SO101BlockStack-v1").max_episode_steps
     # The env is already on the device, so the checkpoint's own footprint is what loading
     # it adds.
     on_device = torch.cuda.memory_allocated()
     policy, preprocessor, postprocessor = load_policy(
         args.checkpoint, LeRobotDatasetMetadata(args.repo_id, root=args.dataset),
-        args.horizon, env.device.type, rtc=not args.no_rtc, int8=args.int8)
+        args.horizon, env.device.type, rtc=not args.no_rtc, int8=args.int8,
+        denoise_steps=args.denoise_steps)
+    # Without stitching a chunk is executed whole, so the policy's own chunk length is the
+    # horizon and `--horizon` has nothing to set.
+    horizon = args.horizon if policy.supports_rtc() else policy.config.n_action_steps
     weights = torch.cuda.memory_allocated() - on_device
     torch.cuda.reset_peak_memory_stats()
 
@@ -158,7 +169,7 @@ def main():
         padded = batch + [batch[-1]] * (env.num_envs - len(batch))
         frames = [] if args.video else None
         stacked, lifted, timings, commands = rollout(
-            env, policy, preprocessor, postprocessor, padded, args.horizon, steps, frames,
+            env, policy, preprocessor, postprocessor, padded, horizon, steps, frames,
             not args.no_smooth)
         results += [{**item, "stacked": bool(stacked[i]), "lifted": bool(lifted[i])}
                     for i, item in enumerate(batch)]
@@ -180,7 +191,8 @@ def main():
     # Median over every chunk, so the first one's kernel selection does not read as latency.
     print(f"{weights / 2**30:.2f} GiB of weights, "
           f"{torch.cuda.max_memory_allocated() / 2**30:.2f} GiB peak, "
-          f"{1000 * float(np.median(latencies)):.0f} ms per chunk at {args.envs} envs")
+          f"{1000 * float(np.median(latencies)):.0f} ms per chunk at {args.envs} envs, "
+          f"{horizon} steps executed per chunk")
     print(f"second difference {float(np.mean(jerks)):.5f} rad a step in the commands")
 
 

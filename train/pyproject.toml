@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "pi0.5 fine-tuning on the SO-101 block-stack demonstrations."
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "lerobot[pi,peft,training]==0.6.0",
+    "lerobot[pi,peft,training,vla_jepa]==0.6.1",
 ]
 
 [tool.uv]
