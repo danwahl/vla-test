@@ -104,6 +104,40 @@ def smooth(chunk):
             + (s3 - s2) * width * slopes[:, piece + 1])
 
 
+def blend(chunk, tail, steps, anchor="velocity"):
+    """``chunk`` eased onto the previous one over its first ``steps``.
+
+    A policy that executes a whole chunk starts the next one from a fresh draw, so the two
+    meet at a step the arm feels as a corner. There is no leftover tail to guide the draw
+    onto, as there is under stitching, so continuity is imposed on the commands instead,
+    faded out over a raised cosine.
+
+    The two anchors differ in what they make continuous at the seam. ``position`` shifts
+    the chunk so its first step lands on the last command and lets the offset decay, which
+    is what MoveIt Pro's executor does before fitting its spline; the rate still steps.
+    ``velocity`` carries the previous chunk's own rate forward and fades the chunk onto
+    that line, which leaves the position to be approached rather than met.
+
+    Either way the fade is over commands rather than over what the policy was asked to
+    agree with, which is what separates this from stitching, and either way the opening
+    steps act on the older plan.
+    """
+    # A tail shorter than two steps carries no rate, and a window longer than the chunk has
+    # nothing to fade over.
+    steps = min(steps, chunk.shape[1])
+    if tail is None or tail.shape[1] < 2 or steps <= 0:
+        return chunk
+    ramp = 0.5 * (1 + torch.cos(torch.pi * torch.arange(
+        steps, device=chunk.device, dtype=chunk.dtype) / steps))[None, :, None]
+    if anchor == "position":
+        opening = chunk[:, :steps] + ramp * (tail[:, -1:] - chunk[:, :1])
+    else:
+        carry = tail[:, -1:] + (tail[:, -1:] - tail[:, -2:-1]) * torch.arange(
+            1, steps + 1, device=chunk.device, dtype=chunk.dtype)[None, :, None]
+        opening = ramp * carry + (1 - ramp) * chunk[:, :steps]
+    return torch.cat([opening, chunk[:, steps:]], dim=1)
+
+
 def load_policy(checkpoint, metadata, horizon, device, rtc=True, int8=False,
                 denoise_steps=None, clip=False):
     """The checkpoint's policy and the processors saved beside it, which carry the

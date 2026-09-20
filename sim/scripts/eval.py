@@ -8,7 +8,9 @@ RL rollout executes them. A policy with no stitching of its own executes whole c
 takes neither flag.
 
 ``--no-smooth`` executes each chunk as it arrives, rather than off the cubic
-`sim.policy.smooth` reads it back from.
+`sim.policy.smooth` reads it back from. ``--blend N`` eases each chunk onto the previous
+one over its first N steps, which is the seam a policy without stitching leaves behind;
+``--anchor`` chooses whether position or velocity is what carries across it.
 """
 
 from __future__ import annotations
@@ -26,7 +28,7 @@ from mani_skill.utils.visualization.misc import images_to_video, tile_images
 
 import sim.env  # noqa: F401  (registers the env)
 from sim.dataset import SIM, root
-from sim.policy import load_policy, smooth
+from sim.policy import blend, load_policy, smooth
 from sim.spec import BLOCK_NAMES, CAMERAS
 
 
@@ -46,7 +48,7 @@ def observation(obs, tasks, time_axis=False):
 
 
 def rollout(env, policy, preprocessor, postprocessor, layouts, horizon, steps,
-            frames=None, smoothing=True, time_axis=False):
+            frames=None, smoothing=True, time_axis=False, blending=0, anchor="velocity"):
     """Drive a batch of layouts for ``steps``, replanning every ``horizon``.
 
     A stack is scored the first step it holds, since the arm carries on moving afterwards.
@@ -77,6 +79,8 @@ def rollout(env, policy, preprocessor, postprocessor, layouts, horizon, steps,
     # to guide the next one onto.
     stitching = policy.supports_rtc()
     leftover, latencies, sent = None, [], []
+    # The two steps the arm was last driven through, which say where it was heading.
+    tail = None
     for done in range(0, steps, horizon):
         # The last chunk is cut to what is left of the episode, so a horizon that does not
         # divide the budget does not buy the policy extra steps to stack in.
@@ -95,7 +99,11 @@ def rollout(env, policy, preprocessor, postprocessor, layouts, horizon, steps,
         commands = postprocessor(chunk)
         if smoothing:
             commands = smooth(commands)
+        # After smoothing, since this is a fix to what reaches the arm rather than to the
+        # wobble inside a chunk.
+        commands = blend(commands, tail, blending, anchor)
         sent.append(commands[:, :take].cpu().numpy())
+        tail = commands[:, max(take - 2, 0):take]
         for step in range(take):
             obs, _, success, _, _ = env.step(commands[:, step])
             stacked |= success
@@ -135,6 +143,11 @@ def main():
     parser.add_argument("--no-rtc", action="store_true", help="denoise each chunk on its own")
     parser.add_argument("--no-smooth", action="store_true",
                         help="execute each chunk as the policy wrote it")
+    parser.add_argument("--blend", type=int, default=0,
+                        help="steps a chunk is eased onto the previous one; a stitched "
+                             "policy needs none")
+    parser.add_argument("--anchor", choices=("velocity", "position"), default="velocity",
+                        help="what the seam is made continuous in")
     parser.add_argument("--clip", action="store_true",
                         help="hold each chunk inside the arm's travel before unnormalizing")
     parser.add_argument("--int8", action="store_true",
@@ -145,6 +158,9 @@ def main():
     # Two policies see the same layouts in the same order, so their outcomes pair up by
     # index and a comparison between them can be read per layout.
     parser.add_argument("--out", type=Path, help="write each layout's outcome")
+    # What the arm was actually told, which is where a seam shows.
+    parser.add_argument("--commands", type=Path,
+                        help="write the commands sent, (layouts, steps, joints)")
     # The layouts are fixed, but the policy draws fresh noise for every chunk it denoises.
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--denoise-steps", type=int,
@@ -182,14 +198,14 @@ def main():
     weights = torch.cuda.memory_allocated() - on_device
     torch.cuda.reset_peak_memory_stats()
 
-    results, latencies, jerks = [], [], []
+    results, latencies, jerks, sent = [], [], [], []
     for start in range(0, len(layouts), env.num_envs):
         batch = layouts[start:start + env.num_envs]
         padded = batch + [batch[-1]] * (env.num_envs - len(batch))
         frames = [] if args.video else None
         stacked, lifted, timings, commands = rollout(
             env, policy, preprocessor, postprocessor, padded, horizon, steps, frames,
-            not args.no_smooth, time_axis)
+            not args.no_smooth, time_axis, args.blend, args.anchor)
         results += [{**item, "stacked": bool(stacked[i]), "lifted": bool(lifted[i])}
                     for i, item in enumerate(batch)]
         latencies += timings
@@ -197,6 +213,7 @@ def main():
         # batch is padded by repeating one of them. A jerky rollout shows as a large second
         # difference here.
         jerks.append(np.abs(np.diff(commands[:len(batch), :, :5], n=2, axis=1)).mean())
+        sent.append(commands[:len(batch)])
         if frames:
             images_to_video(frames, str(args.video), f"{start:03d}",
                             fps=round(1 / env.control_timestep))
@@ -206,6 +223,8 @@ def main():
 
     if args.out:
         args.out.write_text("".join(json.dumps(row) + "\n" for row in results))
+    if args.commands:
+        np.savez_compressed(args.commands, commands=np.concatenate(sent), horizon=horizon)
     report(results)
     # Median over every chunk, so the first one's kernel selection does not read as latency.
     print(f"{weights / 2**30:.2f} GiB of weights, "
