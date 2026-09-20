@@ -30,19 +30,23 @@ from sim.policy import load_policy, smooth
 from sim.spec import BLOCK_NAMES, CAMERAS
 
 
-def observation(obs, tasks):
-    """The env's cameras and joint positions in the form the processors take."""
-    return {
-        "observation.state": obs["agent"]["qpos"].float(),
-        **{f"observation.images.{camera}":
-           obs["sensor_data"][camera]["rgb"].permute(0, 3, 1, 2).float() / 255
-           for camera in CAMERAS},
-        "task": tasks,
-    }
+def observation(obs, tasks, time_axis=False):
+    """The env's cameras and joint positions in the form the processors take.
+
+    A policy that asks for image history takes its cameras under a time axis. The rollout
+    keeps no buffer, so it is given the current frame alone: a policy that reads history
+    predicts what follows rather than observing it.
+    """
+    images = {f"observation.images.{camera}":
+              obs["sensor_data"][camera]["rgb"].permute(0, 3, 1, 2).float() / 255
+              for camera in CAMERAS}
+    if time_axis:
+        images = {key: value.unsqueeze(1) for key, value in images.items()}
+    return {"observation.state": obs["agent"]["qpos"].float(), **images, "task": tasks}
 
 
 def rollout(env, policy, preprocessor, postprocessor, layouts, horizon, steps,
-            frames=None, smoothing=True):
+            frames=None, smoothing=True, time_axis=False):
     """Drive a batch of layouts for ``steps``, replanning every ``horizon``.
 
     A stack is scored the first step it holds, since the arm carries on moving afterwards.
@@ -73,9 +77,12 @@ def rollout(env, policy, preprocessor, postprocessor, layouts, horizon, steps,
     # to guide the next one onto.
     stitching = policy.supports_rtc()
     leftover, latencies, sent = None, [], []
-    for _ in range(0, steps, horizon):
+    for done in range(0, steps, horizon):
+        # The last chunk is cut to what is left of the episode, so a horizon that does not
+        # divide the budget does not buy the policy extra steps to stack in.
+        take = min(horizon, steps - done)
         began = time.perf_counter()
-        batch = preprocessor(observation(obs, tasks))
+        batch = preprocessor(observation(obs, tasks, time_axis))
         chunk = (policy.predict_action_chunk(batch, prev_chunk_left_over=leftover,
                                              inference_delay=0, execution_horizon=horizon)
                  if stitching else policy.predict_action_chunk(batch))
@@ -88,8 +95,8 @@ def rollout(env, policy, preprocessor, postprocessor, layouts, horizon, steps,
         commands = postprocessor(chunk)
         if smoothing:
             commands = smooth(commands)
-        sent.append(commands[:, :horizon].cpu().numpy())
-        for step in range(horizon):
+        sent.append(commands[:, :take].cpu().numpy())
+        for step in range(take):
             obs, _, success, _, _ = env.step(commands[:, step])
             stacked |= success
             if frames is not None:
@@ -122,11 +129,14 @@ def main():
     # change.
     parser.add_argument("--layouts", type=Path,
                         help="default: the dataset's own held-out layouts")
-    parser.add_argument("--horizon", type=int, default=20,
-                        help="steps executed per chunk, where the policy stitches")
+    parser.add_argument("--horizon", type=int,
+                        help="steps executed per chunk; default: 20 stitched, the policy's own "
+                             "otherwise")
     parser.add_argument("--no-rtc", action="store_true", help="denoise each chunk on its own")
     parser.add_argument("--no-smooth", action="store_true",
                         help="execute each chunk as the policy wrote it")
+    parser.add_argument("--clip", action="store_true",
+                        help="hold each chunk inside the arm's travel before unnormalizing")
     parser.add_argument("--int8", action="store_true",
                         help="hold the backbone and vision tower as int8")
     parser.add_argument("--envs", type=int, default=16, help="envs stepped in lockstep")
@@ -155,11 +165,20 @@ def main():
     on_device = torch.cuda.memory_allocated()
     policy, preprocessor, postprocessor = load_policy(
         args.checkpoint, LeRobotDatasetMetadata(args.repo_id, root=args.dataset),
-        args.horizon, env.device.type, rtc=not args.no_rtc, int8=args.int8,
-        denoise_steps=args.denoise_steps)
-    # Without stitching a chunk is executed whole, so the policy's own chunk length is the
-    # horizon and `--horizon` has nothing to set.
-    horizon = args.horizon if policy.supports_rtc() else policy.config.n_action_steps
+        args.horizon or 20, env.device.type, rtc=not args.no_rtc, int8=args.int8,
+        denoise_steps=args.denoise_steps, clip=args.clip)
+    # Without stitching there is no tail to guide the next chunk onto, so a shorter horizon
+    # simply discards the rest of the chunk and replans. That is what a policy's own
+    # `n_action_steps` does to its `chunk_size`, and `--horizon` sets it for a run.
+    horizon = args.horizon or (20 if policy.supports_rtc() else policy.config.n_action_steps)
+    # A policy without stitching hands back `n_action_steps` and no more, so a longer
+    # horizon would execute steps the chunk does not hold.
+    if not policy.supports_rtc() and horizon > policy.config.n_action_steps:
+        raise SystemExit(f"--horizon {horizon} is longer than the {policy.config.n_action_steps} "
+                         f"steps this policy writes a chunk of")
+    # A policy that reads image history says so here; a policy that reads one frame
+    # leaves it unset, and the two already scored are both of the second kind.
+    time_axis = getattr(policy.config, "image_observation_delta_indices", None) is not None
     weights = torch.cuda.memory_allocated() - on_device
     torch.cuda.reset_peak_memory_stats()
 
@@ -170,7 +189,7 @@ def main():
         frames = [] if args.video else None
         stacked, lifted, timings, commands = rollout(
             env, policy, preprocessor, postprocessor, padded, horizon, steps, frames,
-            not args.no_smooth)
+            not args.no_smooth, time_axis)
         results += [{**item, "stacked": bool(stacked[i]), "lifted": bool(lifted[i])}
                     for i, item in enumerate(batch)]
         latencies += timings

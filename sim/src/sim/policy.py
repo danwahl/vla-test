@@ -10,7 +10,8 @@ import torch
 from lerobot.configs.policies import PreTrainedConfig
 from lerobot.policies import make_policy, make_pre_post_processors
 from lerobot.policies.rtc import RTCConfig
-from lerobot.processor import RenameObservationsProcessorStep
+from lerobot.processor import (ProcessorStep, RenameObservationsProcessorStep,
+                               TransitionKey, UnnormalizerProcessorStep)
 from torchao.quantization import Int8WeightOnlyConfig, quantize_
 
 # Both run once per chunk and hand the action expert a cache, so they sit the far side of
@@ -23,6 +24,26 @@ CONTROL_POINTS = 13
 # The same knob under the two names the policies give it: how many Euler steps a chunk is
 # denoised in.
 DENOISE_FIELDS = ("num_inference_steps", "num_inference_timesteps")
+
+
+class ClipNormalizedActions(ProcessorStep):
+    """Hold a chunk inside the normalized range on its way out of the policy.
+
+    Both published recipes ask for this, and a checkpoint trained without it cannot be given
+    it at load time: a checkpoint loads the processors saved beside it rather than rebuilding
+    them from the config. The clamp is a range assertion under `MIN_MAX` and a truncation
+    under anything else, which is why `load_policy` refuses it outside that mapping, and it
+    is idempotent where the saved processors already carry one.
+    """
+
+    def __call__(self, transition):
+        action = transition.get(TransitionKey.ACTION)
+        if action is None:
+            return transition
+        return {**transition, TransitionKey.ACTION: action.clamp(-1.0, 1.0)}
+
+    def transform_features(self, features):
+        return features
 
 
 def _end_slope(near, beyond, h_near, h_beyond):
@@ -84,7 +105,7 @@ def smooth(chunk):
 
 
 def load_policy(checkpoint, metadata, horizon, device, rtc=True, int8=False,
-                denoise_steps=None):
+                denoise_steps=None, clip=False):
     """The checkpoint's policy and the processors saved beside it, which carry the
     camera renaming and the normalization stats from training."""
     config = PreTrainedConfig.from_pretrained(checkpoint)
@@ -103,6 +124,23 @@ def load_policy(checkpoint, metadata, horizon, device, rtc=True, int8=False,
         pretrained_path=checkpoint,
         preprocessor_overrides={"device_processor": {"device": device}},
     )
+    if clip:
+        # The bound is the normalized range, so it asserts a range under `MIN_MAX` and
+        # truncates the distribution under any other mapping: a chunk more than a sigma out
+        # under `MEAN_STD` comes back shortened, with nothing to read it off but a hesitant
+        # arm. lerobot's own factories refuse the step on the same grounds.
+        mapping = getattr(config, "normalization_mapping", {})
+        action = getattr(mapping.get("ACTION"), "value", mapping.get("ACTION"))
+        if str(action) != "MIN_MAX":
+            raise ValueError(f"--clip holds the normalized range, which means the arm's "
+                             f"travel only under MIN_MAX; this checkpoint reads {action}")
+        # Ahead of the unnormalizer, which is what makes the bound mean the arm's travel.
+        steps = postprocessor.steps
+        at = next((i for i, step in enumerate(steps)
+                   if isinstance(step, UnnormalizerProcessorStep)), None)
+        if at is None:
+            raise ValueError("no unnormalizer in the saved postprocessor to clip ahead of")
+        steps.insert(at, ClipNormalizedActions())
     # The cameras reach the policy under the DROID slot names it was trained on. Handing
     # make_policy the same map is what tells it the two sets are meant to differ.
     renaming = next(step for step in preprocessor.steps
