@@ -263,10 +263,11 @@ class Oracle:
         state after a missed pick in front of a policy while what to do next is still
         being demonstrated, and a rollout opens there too, so the two agree.
 
-        The stack is imagined anywhere a block spawns, and the jaws take a quarter turn,
-        which spans every orientation a square block leaves them in. Where the arm cannot
-        hold the pose it falls back to the rest pose. ``generator`` draws them, for a caller
-        that needs the same start twice.
+        The stack is imagined anywhere a block spawns. The jaws take any orientation a
+        square block could leave them in, on the quarter turn of wrist roll centred on the
+        rest pose, which is where every grasp is made. Where the arm cannot hold the pose it
+        falls back to the rest pose. ``generator`` draws them, for a caller that needs the
+        same start twice.
 
         The pose is handed back for a layout to carry, so `reset` is the one thing that
         places the arm.
@@ -282,6 +283,11 @@ class Oracle:
         span = torch.tensor([SPAWN_X[1] - SPAWN_X[0], SPAWN_Y[1] - SPAWN_Y[0], 0.0], **kw)
         tcp = low + span * torch.rand(self.n, 3, generator=generator, **kw)
         jaw = math.pi / 2 * torch.rand(self.n, generator=generator, **kw)
+        # Of the four quarter turns, take the one `_plan_grasp` would: the wrist roll nearest
+        # the rest pose's, which is the band every grasp is made in.
+        twist = torch.stack([(ik(tcp, jaw + k * math.pi / 2)[0][:, 4] - HOME_QPOS[4]).abs()
+                             for k in range(4)])
+        jaw = jaw + math.pi / 2 * twist.argmin(0)
 
         # Back off the way `run` leaves a block it has seated, anywhere from touching the
         # stack to as far as the arm can hold, so the pose varies in height as well as over
