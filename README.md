@@ -35,11 +35,9 @@ uv run python sim/scripts/collect.py OUT
 `train/pi05_so101_lora_backbone.yaml` is the recipe: LoRA on pi0.5's gemma_2b language backbone, the action expert and the projection heads dense, SigLIP frozen.
 
 ```bash
-set -a; . ./.env; set +a    # WANDB_API_KEY, see .env.example
 uv run lerobot-train --config_path=train/pi05_so101_lora_backbone.yaml \
                      --output_dir=/data/checkpoints/pi05_so101_block_stack_sim \
-                     --job_name=pi05_so101_block_stack_sim \
-                     --wandb.run_id=pi05_so101_block_stack_sim
+                     --job_name=pi05_so101_block_stack_sim
 ```
 
 `uv sync --package vla-test-train` installs this without the sim.
@@ -157,8 +155,7 @@ uv run python sim/scripts/combine.py /data/datasets/so101_block_stack
 
 uv run lerobot-train --config_path=train/pi05_so101_mix.yaml \
                      --output_dir=/data/checkpoints/pi05_so101_block_stack \
-                     --job_name=pi05_so101_block_stack \
-                     --wandb.run_id=pi05_so101_block_stack
+                     --job_name=pi05_so101_block_stack
 ```
 
 `hw/rollout.py` is the evaluation, with the arm where the simulator was. Each layout is planned in sim, the console shows where its blocks belong, and the arm opens in the pose that layout carries, which is the state `sim/scripts/eval.py` hands the same policy. Whether it stacked is the operator's call:

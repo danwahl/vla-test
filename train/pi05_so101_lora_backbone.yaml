@@ -55,8 +55,7 @@ steps: 20000
 batch_size: 4
 save_freq: 10000
 
-# Runs land in whatever account WANDB_API_KEY belongs to. Checkpoints stay on disk.
-wandb:
+# Logged to the local trackio database: `trackio show --project vla-test`.
+trackio:
   enable: true
   project: vla-test
-  disable_artifact: true

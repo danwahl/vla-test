@@ -1,0 +1,47 @@
+# SmolVLA on the block-stack demonstrations, on the protocol `pi05_so101_lora_backbone.yaml`
+# sets: the same data, 20k steps at batch 4, r=32 LoRA on the language backbone, the action
+# expert trained outright, vision frozen, no augmentation. What the checkpoint was
+# pretrained under stays its own: normalization, optimizer and chunk length. Stock
+# lerobot-train runs this file as it stands:
+#
+#   uv run lerobot-train --config_path=train/smolvla_so101.yaml \
+#                        --output_dir=... --job_name=...
+
+policy:
+  path: lerobot/smolvla_base
+  push_to_hub: false
+  # pi0.5's schedule: 1000 warmup steps, then cosine to `steps`. The learning rate it
+  # peaks at and decays to is the checkpoint's.
+  scheduler_warmup_steps: 1000
+  scheduler_decay_steps: 20000
+
+dataset:
+  repo_id: drwahl/so101_block_stack_sim
+  root: /data/datasets/so101_block_stack_sim
+
+# The checkpoint keeps the first 16 layers of SmolVLM2, and the adapter covers those.
+peft:
+  method_type: LORA
+  r: 32
+  lora_alpha: 64
+  target_modules: '.*\.vlm\.model\.text_model\.layers\.\d+\.(self_attn\.[qkvo]_proj|mlp\.(gate|up|down)_proj)'
+  full_training_modules:
+    - lm_expert
+    - state_proj
+    - action_in_proj
+    - action_out_proj
+    - action_time_mlp_in
+    - action_time_mlp_out
+
+# Pretrained on community SO-100 data with up to three cameras named by order.
+rename_map:
+  observation.images.top: observation.images.camera1
+  observation.images.wrist: observation.images.camera2
+
+steps: 20000
+batch_size: 4
+save_freq: 5000
+
+trackio:
+  enable: true
+  project: vla-test

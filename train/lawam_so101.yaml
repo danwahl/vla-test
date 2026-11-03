@@ -1,0 +1,52 @@
+# LaWAM on the block-stack demonstrations, on the protocol `pi05_so101_lora_backbone.yaml`
+# sets: the same data, 20k steps at batch 4, r=32 LoRA on the language backbone, the action
+# head trained outright, vision frozen, no augmentation. What the checkpoint was pretrained
+# under stays its own: normalization, optimizer and chunk length. Stock lerobot-train runs
+# this file as it stands:
+#
+#   uv run lerobot-train --config_path=train/lawam_so101.yaml \
+#                        --output_dir=... --job_name=...
+#
+# If a dataloader worker segfaults in `accelerator.backward`, resume from the last checkpoint.
+
+policy:
+  path: jialei02/lawam-pretrain-lerobot
+  push_to_hub: false
+  # pi0.5's warmup and decay length. LaWAM's own scheduler starts its cosine at the end of
+  # warmup, and the learning rate it peaks at and decays to is the checkpoint's.
+  scheduler_warmup_steps: 1000
+  scheduler_decay_steps: 20000
+  # Their SFT sets this and the checkpoint default is false. It clamps the normalized action
+  # on the way out, which under MIN_MAX is the range assertion it is meant to be.
+  clip_normalized_actions: true
+
+dataset:
+  repo_id: drwahl/so101_block_stack_sim
+  root: /data/datasets/so101_block_stack_sim
+
+# The LAM decoder trains with the flow head because it is the world model in the action
+# path: the flow head reads its prediction of the next latent. The two learned query
+# tensors, `act_query` and `flow_action_query`, are bare parameters that peft cannot name,
+# so they keep their pretrained values.
+peft:
+  method_type: LORA
+  r: 32
+  lora_alpha: 64
+  target_modules: '.*\.vlm\.model\.language_model\.layers\.\d+\.(self_attn\.[qkvo]_proj|mlp\.(gate|up|down)_proj)'
+  full_training_modules:
+    - policy_backend.flow
+    - policy_backend.vlm_to_lam
+    - policy_backend.lam.decoder
+
+# The top camera carries where a block is, so it takes the primary slot the LAM also reads.
+rename_map:
+  observation.images.top: observation.images.image
+  observation.images.wrist: observation.images.image2
+
+steps: 20000
+batch_size: 4
+save_freq: 5000
+
+trackio:
+  enable: true
+  project: vla-test

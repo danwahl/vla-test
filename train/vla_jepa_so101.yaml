@@ -1,0 +1,60 @@
+# VLA-JEPA on the block-stack demonstrations, on the protocol `pi05_so101_lora_backbone.yaml`
+# sets: the same data, 20k steps at batch 4, r=32 LoRA on the language backbone, the action
+# head trained outright, vision frozen, no augmentation. What the checkpoint was pretrained
+# under stays its own: normalization, optimizer and chunk length. Stock lerobot-train runs
+# this file as it stands:
+#
+#   uv run lerobot-train --config_path=train/vla_jepa_so101.yaml \
+#                        --output_dir=... --job_name=...
+
+# Values under `policy:` reach the pretrained config as flattened CLI overrides, which drop
+# a null, so `resize_images_to` is written as the string the override parses.
+policy:
+  path: lerobot/VLA-JEPA-Pretrain
+  push_to_hub: false
+  # pi0.5's schedule: 1000 warmup steps, then cosine to `steps`. The learning rate it
+  # peaks at and decays to is the checkpoint's.
+  scheduler_warmup_steps: 1000
+  scheduler_decay_steps: 20000
+  # The checkpoint's world model was pretrained before lerobot's rotary fix (#4835), so its
+  # predictor keeps the expansion it learned under.
+  world_model_rope_legacy: true
+  # DROID is 7 action and 8 state dimensions; the arm is 6 of each. Only the layers that
+  # touch those two widths are re-drawn, and the rest of each projection is kept.
+  reinit_modules: '["model.action_model.action_encoder", "model.action_model.action_decoder", "model.action_model.state_encoder"]'
+  # LIBERO's gripper is a sign; ours is a jaw width the unnormalizer already produces.
+  pre_snap_gripper_action: false
+  binarize_gripper_action: false
+  # Applied on the inference path only, so anything but null trains and deploys at
+  # different resolutions. Both processors resize on their own.
+  resize_images_to: 'null'
+
+dataset:
+  repo_id: drwahl/so101_block_stack_sim
+  root: /data/datasets/so101_block_stack_sim
+
+# The video predictor trains with the action head because the auxiliary loss is the only
+# thing that trains it.
+peft:
+  method_type: LORA
+  r: 32
+  lora_alpha: 64
+  target_modules: '.*\.qwen\.model\.model\.language_model\.layers\.\d+\.(self_attn\.[qkvo]_proj|mlp\.(gate|up|down)_proj)'
+  full_training_modules:
+    - action_model
+    - video_predictor
+
+# The checkpoint was pretrained on two DROID exterior views. The top camera carries where a
+# block is, so it takes the first slot.
+rename_map:
+  observation.images.top: observation.images.exterior_1_left
+  observation.images.wrist: observation.images.exterior_2_left
+
+steps: 20000
+# Peaks at 20.5 GiB of a 24 GiB card. num_video_frames: 4 is the lever if it stops fitting.
+batch_size: 4
+save_freq: 5000
+
+trackio:
+  enable: true
+  project: vla-test

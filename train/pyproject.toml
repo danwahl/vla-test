@@ -1,10 +1,10 @@
 [project]
 name = "vla-test-train"
 version = "0.1.0"
-description = "pi0.5 fine-tuning on the SO-101 block-stack demonstrations."
+description = "VLA fine-tuning on the SO-101 block-stack demonstrations."
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "lerobot[pi,peft,training,vla_jepa,lawam]>=0.6.2",
+    "lerobot[pi,peft,training,smolvla,vla_jepa,lawam]>=0.6.2",
 ]
 
 [tool.uv]

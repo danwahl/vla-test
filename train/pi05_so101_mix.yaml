@@ -60,7 +60,6 @@ steps: 20000
 batch_size: 4
 save_freq: 5000
 
-wandb:
+trackio:
   enable: true
   project: vla-test
-  disable_artifact: true
