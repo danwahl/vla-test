@@ -2,7 +2,7 @@
 
 An end-to-end example of training a vision-language-action policy on an [SO-101](https://github.com/TheRobotStudio/SO-ARM100): oracle, demonstration collection, fine-tuning, evaluation, reinforcement learning, hardware.
 
-The demonstrations and the trained checkpoints are on the Hub: [so101_block_stack_sim](https://huggingface.co/datasets/drwahl/so101_block_stack_sim), [so101_block_stack_hw](https://huggingface.co/datasets/drwahl/so101_block_stack_hw) and [so101_block_stack](https://huggingface.co/datasets/drwahl/so101_block_stack), [pi05_so101_block_stack_sim](https://huggingface.co/drwahl/pi05_so101_block_stack_sim) and [pi05_so101_block_stack](https://huggingface.co/drwahl/pi05_so101_block_stack).
+The demonstrations and the trained checkpoints are on the Hub: [so101_block_stack_sim](https://huggingface.co/datasets/drwahl/so101_block_stack_sim), [so101_block_stack_hw](https://huggingface.co/datasets/drwahl/so101_block_stack_hw) and [so101_block_stack](https://huggingface.co/datasets/drwahl/so101_block_stack), [pi05_so101_block_stack_sim](https://huggingface.co/drwahl/pi05_so101_block_stack_sim) and [pi05_so101_block_stack](https://huggingface.co/drwahl/pi05_so101_block_stack), and the sim checkpoints of the four policies compared against pi0.5: [pi0_so101_block_stack_sim](https://huggingface.co/drwahl/pi0_so101_block_stack_sim), [smolvla_so101_block_stack_sim](https://huggingface.co/drwahl/smolvla_so101_block_stack_sim), [lawam_so101_block_stack_sim](https://huggingface.co/drwahl/lawam_so101_block_stack_sim), [vla_jepa_so101_block_stack_sim](https://huggingface.co/drwahl/vla_jepa_so101_block_stack_sim).
 
 ## Sim
 
@@ -67,7 +67,19 @@ uv run python sim/scripts/eval.py \
 
 `--video DIR` records each batch, and `--no-rtc` denoises each chunk on its own. `--layouts FILE` scores the checkpoint on another dataset's held-out layouts; the normalization travels with the checkpoint, so only the spawns change. The run reports what the checkpoint costs to run beside what it scores: the weights it loads, the peak it reaches rolling out, and the median time a chunk takes to denoise.
 
-`sim/scripts/eval.py` takes a checkpoint of any of the three policies the repo trains, dispatching on what the checkpoint carries: a policy with no stitching of its own is asked for a chunk and executes it, at the horizon `--horizon` sets or its own `n_action_steps`, and `--blend N` eases each chunk onto the previous one over its first N steps, which is the seam stitching would otherwise remove. `train/` holds the recipes. Scored over three seeds of the held-out layouts, pi0.5 stacks 138.7, LaWAM 123.7 on the normalization and adapter rank its own release uses, and VLA-JEPA 113.0. Most of the distance between the guests and their own first scores is the normalization: a window belongs to the checkpoint that was pretrained under it, and imposing pi0.5's cost LaWAM 38 layouts of 150.
+`sim/scripts/eval.py` takes a checkpoint of any policy the repo trains, dispatching on what the checkpoint carries: a policy with no stitching of its own is asked for a chunk and executes it, at the horizon `--horizon` sets or its own `n_action_steps`, and `--blend N` eases each chunk onto the previous one over its first N steps, which is the seam stitching would otherwise remove.
+
+`train/` holds a recipe for each of pi0.5, pi0, SmolVLA, LaWAM and VLA-JEPA on one protocol: the same demonstrations, 20k steps at batch 4, r=32 LoRA on the language backbone, the action head trained outright and vision frozen. Normalization, learning rate and chunk length stay each checkpoint's own. Each policy is scored at the horizon, and with or without stitching, that stacks most on one seed of the held-out layouts, then on three fresh seeds:
+
+| Policy | Executes | Stacked of 150 | Lifted |
+|---|---|---|---|
+| pi0.5 | 10 steps, stitched | 138.0 | 147.7 |
+| pi0 | 10 steps | 114.7 | 132.7 |
+| LaWAM | 10 steps | 110.7 | 123.3 |
+| VLA-JEPA | 7 steps, its whole chunk | 91.7 | 105.7 |
+| SmolVLA | 50 steps, its whole chunk | 0.3 | 11.3 |
+
+Unstitched at 10 steps, pi0.5 stacks 122.7, so stitching is 15 layouts of its lead. Each policy's own chunk length costs it: executed whole, pi0.5 stacks 80.0 and pi0 48.7. SmolVLA predicts the demonstrations' actions on their own frames as closely as the others do, and does not recover from its own errors once it drives the arm.
 
 `--int8` holds the weights that read the observation at eight bits, five sevenths of what a policy holds: the language backbone and the vision tower. The action expert and the projections that emit the commands keep the precision they were trained at. It roughly halves what the weights occupy. Scored over three seeds of the held-out layouts the two sit within each other's spread, and the layouts they disagree on are ones neither takes on all three seeds, so the flag moves layouts that were already close either way.
 
